@@ -1,0 +1,44 @@
+# ---------------------------------------------------------------
+# Unreal Engine: generated files (regenerated on build / open)
+# ---------------------------------------------------------------
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+*.sln
+*.slnx
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# IDE
+.vs/
+.idea/
+.vscode/
+
+# Stray pack thumbnails in the project root
+NeoClassicsDemoFAB.png
+UB_FreePack.png
+
+# ---------------------------------------------------------------
+# Content: whitelist. Only our own assets and Epic template content
+# go to git. Third-party packs (GalleryPack, UnrealBucket, Fab,
+# CityPark, FAB_Assets, Imported_Assets, ...) are excluded because
+# of their size and licenses; see README.md.
+# To add a new folder of your own, add a "!Content/<Folder>/" line.
+# ---------------------------------------------------------------
+Content/*
+!Content/_MuseumProject/
+!Content/__ExternalActors__/
+!Content/__ExternalObjects__/
+!Content/Input/
+!Content/Characters/
+!Content/ThirdPerson/
+!Content/LevelPrototyping/
+!Content/Variant_Combat/
+!Content/Variant_Platforming/
+!Content/Variant_SideScrolling/
+!Content/Collections/
+!Content/L_MuseumComplex.umap
