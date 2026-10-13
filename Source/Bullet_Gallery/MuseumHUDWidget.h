@@ -29,6 +29,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HUD")
 	void SetAmmo(int32 AmmoInMagazine, int32 MagazineSize, int32 ReserveAmmo);
 
+	/** Shows or hides the "Reloading..." title */
+	UFUNCTION(BlueprintCallable, Category = "HUD")
+	void SetReloading(bool bReloading);
+
 	/** Red flash over the screen that fades out */
 	UFUNCTION(BlueprintCallable, Category = "HUD")
 	void PlayDamageFlash();
@@ -43,6 +47,9 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "HUD", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> AmmoText;
+
+	UPROPERTY(BlueprintReadOnly, Category = "HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> ReloadText;
 
 	UPROPERTY(BlueprintReadOnly, Category = "HUD", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> DamageOverlay;
@@ -79,6 +86,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Text")
 	FText AmmoLabel = NSLOCTEXT("MuseumHUD", "Ammo", "Bullets");
 
+	UPROPERTY(EditAnywhere, Category = "Text")
+	FText ReloadLabel = NSLOCTEXT("MuseumHUD", "Reloading", "Reloading...");
+
 private:
 	/** Creates the whole HUD when the Widget Blueprint designer has no widgets */
 	void BuildDefaultLayout();
@@ -92,5 +102,6 @@ private:
 	float CurrentMaxHealth = 100.f;
 	int32 CurrentAmmo = 0;
 	int32 CurrentReserve = 0;
+	bool bIsReloading = false;
 	float FlashOpacity = 0.f;
 };

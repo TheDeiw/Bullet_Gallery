@@ -97,6 +97,11 @@ void UMuseumHUDWidget::BuildDefaultLayout()
 	Rows->AddChildToVerticalBox(MakeText(TEXT("AmmoLabel"), AmmoLabel, 16));
 	AmmoText = MakeText(TEXT("AmmoText"), FText::GetEmpty(), 16);
 	Rows->AddChildToVerticalBox(AmmoText);
+
+	// Shown only while the pistol is being reloaded
+	ReloadText = MakeText(TEXT("ReloadText"), ReloadLabel, 16);
+	ReloadText->SetVisibility(ESlateVisibility::Collapsed);
+	Rows->AddChildToVerticalBox(ReloadText);
 }
 
 void UMuseumHUDWidget::NativeConstruct()
@@ -133,6 +138,12 @@ void UMuseumHUDWidget::SetAmmo(int32 AmmoInMagazine, int32 MagazineSize, int32 R
 	ApplyValues();
 }
 
+void UMuseumHUDWidget::SetReloading(bool bReloading)
+{
+	bIsReloading = bReloading;
+	ApplyValues();
+}
+
 void UMuseumHUDWidget::PlayDamageFlash()
 {
 	FlashOpacity = MaxFlashOpacity;
@@ -148,5 +159,9 @@ void UMuseumHUDWidget::ApplyValues()
 	if (AmmoText)
 	{
 		AmmoText->SetText(FText::FromString(FString::Printf(TEXT("%d / %d"), CurrentAmmo, CurrentReserve)));
+	}
+	if (ReloadText)
+	{
+		ReloadText->SetVisibility(bIsReloading ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 }

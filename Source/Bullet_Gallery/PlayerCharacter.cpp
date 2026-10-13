@@ -373,5 +373,9 @@ void APlayerCharacter::OnAmmoChanged_Implementation(int32 InAmmoInMagazine, int3
 
 void APlayerCharacter::OnReloadStateChanged_Implementation(bool bReloading)
 {
-	// Nothing to show: the HUD has no reload indicator. Blueprints can override this event.
+	// Only the "Reloading..." title is shown, there is no reload animation
+	if (HUDWidget)
+	{
+		HUDWidget->SetReloading(bReloading);
+	}
 }
