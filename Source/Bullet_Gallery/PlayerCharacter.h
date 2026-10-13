@@ -10,9 +10,12 @@
 class UCameraComponent;
 class USkeletalMeshComponent;
 class UAnimMontage;
+class UAnimSequenceBase;
 class UInputMappingContext;
 class UInputAction;
+class UCameraShakeBase;
 class AMuseumProjectile;
+class UMuseumHUDWidget;
 
 UCLASS()
 class BULLET_GALLERY_API APlayerCharacter : public ACharacter
@@ -37,15 +40,53 @@ protected:
 	void StopWalk();
 	void StartAim();
 	void StopAim();
+	void Reload();
+	void FinishReload();
+	void Die();
+	void RestartLevel();
 
 	/** Picks jog or walk speed depending on the walk key and aiming */
 	void UpdateMovementSpeed();
 
+	/** Creates the HUD widget and adds it to the viewport (once a player controller owns the character) */
+	void CreateHUDWidget();
+
 	bool bWantsToWalk = false;
 	bool bIsAiming = false;
+	bool bIsReloading = false;
+	bool bIsDead = false;
 	float LastFireTime = -1000.f;
+	float Health = 100.f;
+	int32 AmmoInMagazine = 0;
+	int32 ReserveAmmo = 0;
+	FTimerHandle ReloadTimer;
+	FTimerHandle RestartTimer;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMuseumHUDWidget> HUDWidget;
 
 public:
+	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent,
+		AController* EventInstigator, AActor* DamageCauser) override;
+
+	UFUNCTION(BlueprintPure, Category = "Health")
+	float GetHealth() const { return Health; }
+
+	UFUNCTION(BlueprintPure, Category = "Health")
+	bool IsDead() const { return bIsDead; }
+
+	/** Health changed (hit by an enemy). The C++ part updates the HUD; a Blueprint can add more */
+	UFUNCTION(BlueprintNativeEvent, Category = "Health")
+	void OnHealthChanged(float NewHealth, float InMaxHealth);
+
+	/** Ammo changed: a shot or a reload. The C++ part updates the HUD; a Blueprint can add more */
+	UFUNCTION(BlueprintNativeEvent, Category = "Weapon")
+	void OnAmmoChanged(int32 InAmmoInMagazine, int32 InMagazineSize, int32 InReserveAmmo);
+
+	/** Reload started (true) or finished (false) */
+	UFUNCTION(BlueprintNativeEvent, Category = "Weapon")
+	void OnReloadStateChanged(bool bReloading);
+
 	/** Camera pitch for the Aim Offset in the Animation Blueprint (-90..90) */
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	float GetAimPitch() const;
@@ -83,6 +124,48 @@ public:
 	/** How far the crosshair trace looks for a target, cm */
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	float MaxAimDistance = 30000.f;
+
+	/** The Mauser C96 is loaded with a 10-round stripper clip */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 1))
+	int32 MagazineSize = 10;
+
+	/** Spare bullets at the start, not counting the loaded magazine */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 0))
+	int32 StartReserveAmmo = 60;
+
+	/** Reload animation of the character's arms (MM_Pistol_Reload) */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TObjectPtr<UAnimSequenceBase> ReloadAnim;
+
+	/** Slot of the Animation Blueprint the reload is played in */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	FName ReloadSlotName = TEXT("Arms");
+
+	/** Reload time, seconds; 0 = the length of ReloadAnim */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	float ReloadTime = 0.f;
+
+	/** Animations of the pistol itself: the slide on a shot, the clip on a reload */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TObjectPtr<UAnimSequenceBase> WeaponFireAnim;   // A_Fire
+
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TObjectPtr<UAnimSequenceBase> WeaponReloadAnim; // A_Reload
+
+	UPROPERTY(EditDefaultsOnly, Category = "Health", meta = (ClampMin = 1))
+	float MaxHealth = 100.f;
+
+	/** Camera shake played when an enemy hits the player */
+	UPROPERTY(EditDefaultsOnly, Category = "Health")
+	TSubclassOf<UCameraShakeBase> HitCameraShake;
+
+	/** After death the level restarts in this many seconds */
+	UPROPERTY(EditDefaultsOnly, Category = "Health")
+	float RestartDelay = 3.f;
+
+	/** HUD with the health and ammo bars (WBP_HUD) */
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSubclassOf<UMuseumHUDWidget> HUDWidgetClass;
 
 	/** Default movement speed (jog) */
 	UPROPERTY(EditDefaultsOnly, Category = "Movement")
@@ -129,5 +212,8 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> AimAction;        // IA_Aim (hold)
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> ReloadAction;     // IA_Reload
 
 };

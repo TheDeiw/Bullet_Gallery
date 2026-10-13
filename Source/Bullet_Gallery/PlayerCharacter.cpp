@@ -1,14 +1,19 @@
 #include "PlayerCharacter.h"
 
 #include "Bullet_Gallery.h"
+#include "MuseumHUDWidget.h"
 #include "MuseumProjectile.h"
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/AnimSequenceBase.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/CameraShakeBase.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/DamageEvents.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Kismet/GameplayStatics.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 
@@ -57,6 +62,31 @@ void APlayerCharacter::BeginPlay()
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale, WeaponSocketName);
 
 	UpdateMovementSpeed();
+
+	Health = MaxHealth;
+	AmmoInMagazine = MagazineSize;
+	ReserveAmmo = StartReserveAmmo;
+
+	CreateHUDWidget();
+}
+
+void APlayerCharacter::CreateHUDWidget()
+{
+	if (HUDWidget) { return; }
+
+	// Only the local player sees a HUD
+	APlayerController* PC = Cast<APlayerController>(Controller);
+	if (!PC || !PC->IsLocalController()) { return; }
+
+	const TSubclassOf<UMuseumHUDWidget> WidgetClass = HUDWidgetClass ? HUDWidgetClass : TSubclassOf<UMuseumHUDWidget>(UMuseumHUDWidget::StaticClass());
+	HUDWidget = CreateWidget<UMuseumHUDWidget>(PC, WidgetClass);
+	if (!HUDWidget) { return; }
+
+	HUDWidget->AddToViewport();
+
+	// Show the starting values
+	OnHealthChanged(Health, MaxHealth);
+	OnAmmoChanged(AmmoInMagazine, MagazineSize, ReserveAmmo);
 }
 
 // Called every frame
@@ -85,6 +115,12 @@ void APlayerCharacter::NotifyControllerChanged()
 			if (MouseLookMappingContext) { Subsystem->AddMappingContext(MouseLookMappingContext, 0); }
 		}
 	}
+
+	// Possessed after BeginPlay: the HUD could not be created there
+	if (HasActorBegunPlay())
+	{
+		CreateHUDWidget();
+	}
 }
 
 // Called to bind functionality to input
@@ -104,6 +140,10 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		Input->BindAction(WalkAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopWalk);
 		Input->BindAction(AimAction, ETriggerEvent::Started, this, &APlayerCharacter::StartAim);
 		Input->BindAction(AimAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopAim);
+		if (ReloadAction)
+		{
+			Input->BindAction(ReloadAction, ETriggerEvent::Started, this, &APlayerCharacter::Reload);
+		}
 	}
 }
 
@@ -158,16 +198,30 @@ void APlayerCharacter::UpdateMovementSpeed()
 void APlayerCharacter::Fire()
 {
 	UWorld* World = GetWorld();
-	if (!World || !Controller || !ProjectileClass) { return; }
+	if (!World || !Controller || !ProjectileClass || bIsDead || bIsReloading) { return; }
+
+	// Empty magazine: reload instead of shooting
+	if (AmmoInMagazine <= 0)
+	{
+		Reload();
+		return;
+	}
 
 	// Fire rate limit
 	const float Now = World->GetTimeSeconds();
 	if (Now - LastFireTime < FireInterval) { return; }
 	LastFireTime = Now;
 
+	--AmmoInMagazine;
+	OnAmmoChanged(AmmoInMagazine, MagazineSize, ReserveAmmo);
+
 	if (FireMontage)
 	{
 		PlayAnimMontage(FireMontage);
+	}
+	if (WeaponFireAnim)
+	{
+		WeaponMesh->PlayAnimation(WeaponFireAnim, false);
 	}
 
 	// The point under the crosshair: trace from the camera through the centre of the screen
@@ -202,4 +256,122 @@ float APlayerCharacter::GetAimPitch() const
 {
 	// The controller stores pitch as 0..360; the Aim Offset expects -90..90
 	return FRotator::NormalizeAxis(GetBaseAimRotation().Pitch);
+}
+
+void APlayerCharacter::Reload()
+{
+	if (bIsDead || bIsReloading || AmmoInMagazine >= MagazineSize || ReserveAmmo <= 0) { return; }
+
+	bIsReloading = true;
+	OnReloadStateChanged(true);
+
+	float Duration = ReloadTime;
+	if (ReloadAnim)
+	{
+		// Played in the arms slot, so the legs keep walking
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			AnimInstance->PlaySlotAnimationAsDynamicMontage(ReloadAnim, ReloadSlotName, 0.15f, 0.2f);
+		}
+		if (Duration <= 0.f)
+		{
+			Duration = ReloadAnim->GetPlayLength();
+		}
+	}
+	if (WeaponReloadAnim)
+	{
+		WeaponMesh->PlayAnimation(WeaponReloadAnim, false);
+	}
+
+	GetWorldTimerManager().SetTimer(ReloadTimer, this, &APlayerCharacter::FinishReload, FMath::Max(Duration, 0.1f), false);
+}
+
+void APlayerCharacter::FinishReload()
+{
+	if (bIsDead) { return; }
+
+	// Move bullets from the reserve into the magazine
+	const int32 Loaded = FMath::Min(MagazineSize - AmmoInMagazine, ReserveAmmo);
+	AmmoInMagazine += Loaded;
+	ReserveAmmo -= Loaded;
+
+	bIsReloading = false;
+	OnReloadStateChanged(false);
+	OnAmmoChanged(AmmoInMagazine, MagazineSize, ReserveAmmo);
+}
+
+float APlayerCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
+	AController* EventInstigator, AActor* DamageCauser)
+{
+	if (bIsDead) { return 0.f; }
+
+	const float Applied = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+	if (Applied <= 0.f) { return 0.f; }
+
+	Health = FMath::Clamp(Health - Applied, 0.f, MaxHealth);
+	OnHealthChanged(Health, MaxHealth);
+
+	// The hit must be obvious: red flash on the screen and a camera shake
+	if (HUDWidget)
+	{
+		HUDWidget->PlayDamageFlash();
+	}
+	if (APlayerController* PC = Cast<APlayerController>(Controller))
+	{
+		if (HitCameraShake)
+		{
+			PC->ClientStartCameraShake(HitCameraShake);
+		}
+	}
+
+	if (Health <= 0.f)
+	{
+		Die();
+	}
+	return Applied;
+}
+
+void APlayerCharacter::Die()
+{
+	bIsDead = true;
+	bIsReloading = false;
+	GetWorldTimerManager().ClearTimer(ReloadTimer);
+
+	if (APlayerController* PC = Cast<APlayerController>(Controller))
+	{
+		DisableInput(PC);
+	}
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->DisableMovement();
+
+	GetWorldTimerManager().SetTimer(RestartTimer, this, &APlayerCharacter::RestartLevel, RestartDelay, false);
+}
+
+void APlayerCharacter::RestartLevel()
+{
+	UGameplayStatics::OpenLevel(this, FName(*UGameplayStatics::GetCurrentLevelName(this, true)));
+}
+
+void APlayerCharacter::OnHealthChanged_Implementation(float NewHealth, float InMaxHealth)
+{
+	if (HUDWidget)
+	{
+		HUDWidget->SetHealth(NewHealth, InMaxHealth);
+	}
+}
+
+void APlayerCharacter::OnAmmoChanged_Implementation(int32 InAmmoInMagazine, int32 InMagazineSize, int32 InReserveAmmo)
+{
+	if (HUDWidget)
+	{
+		HUDWidget->SetAmmo(InAmmoInMagazine, InMagazineSize, InReserveAmmo);
+	}
+}
+
+void APlayerCharacter::OnReloadStateChanged_Implementation(bool bReloading)
+{
+	if (HUDWidget)
+	{
+		HUDWidget->SetReloading(bReloading);
+	}
 }
