@@ -37,6 +37,13 @@ APlayerCharacter::APlayerCharacter()
 	const float HalfHeight = GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight();
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -HalfHeight), FRotator(0.f, -90.f, 0.f));
 
+	// Second body with the head (see BodyMesh in the header); set up in BeginPlay when the Blueprint's mesh is known
+	BodyMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("BodyMesh"));
+	BodyMesh->SetupAttachment(GetMesh());
+	BodyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BodyMesh->SetOwnerNoSee(true);
+	BodyMesh->bCastHiddenShadow = true;
+
 	// Camera at eye level, slightly in front of the head
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
 	FirstPersonCamera->SetupAttachment(GetCapsuleComponent());
@@ -55,7 +62,20 @@ void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Two meshes: the first-person one has no head (the camera sits inside it) and is seen only by the owner;
+	// the second one is a full copy with the head, hidden from the owner's camera but casting the shadow
 	GetMesh()->HideBoneByName(TEXT("head"), EPhysBodyOp::PBO_None);
+	GetMesh()->SetOnlyOwnerSee(true);
+	GetMesh()->SetCastShadow(false);
+
+	BodyMesh->SetSkeletalMesh(GetMesh()->GetSkeletalMeshAsset());
+	for (int32 i = 0; i < GetMesh()->GetNumMaterials(); ++i)
+	{
+		BodyMesh->SetMaterial(i, GetMesh()->GetMaterial(i));
+	}
+	// Its own copy of the Animation Blueprint (a leader pose would copy the hidden head bone too)
+	BodyMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+	BodyMesh->SetAnimInstanceClass(GetMesh()->GetAnimClass());
 
 	// Attach the weapon to the skeleton socket (also picks up a socket name overridden in the Blueprint)
 	WeaponMesh->AttachToComponent(GetMesh(),
@@ -265,25 +285,8 @@ void APlayerCharacter::Reload()
 	bIsReloading = true;
 	OnReloadStateChanged(true);
 
-	float Duration = ReloadTime;
-	if (ReloadAnim)
-	{
-		// Played in the arms slot, so the legs keep walking
-		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
-		{
-			AnimInstance->PlaySlotAnimationAsDynamicMontage(ReloadAnim, ReloadSlotName, 0.15f, 0.2f);
-		}
-		if (Duration <= 0.f)
-		{
-			Duration = ReloadAnim->GetPlayLength();
-		}
-	}
-	if (WeaponReloadAnim)
-	{
-		WeaponMesh->PlayAnimation(WeaponReloadAnim, false);
-	}
-
-	GetWorldTimerManager().SetTimer(ReloadTimer, this, &APlayerCharacter::FinishReload, FMath::Max(Duration, 0.1f), false);
+	// No animation: the magazine is simply refilled after ReloadTime
+	GetWorldTimerManager().SetTimer(ReloadTimer, this, &APlayerCharacter::FinishReload, FMath::Max(ReloadTime, 0.1f), false);
 }
 
 void APlayerCharacter::FinishReload()
@@ -370,8 +373,5 @@ void APlayerCharacter::OnAmmoChanged_Implementation(int32 InAmmoInMagazine, int3
 
 void APlayerCharacter::OnReloadStateChanged_Implementation(bool bReloading)
 {
-	if (HUDWidget)
-	{
-		HUDWidget->SetReloading(bReloading);
-	}
+	// Nothing to show: the HUD has no reload indicator. Blueprints can override this event.
 }

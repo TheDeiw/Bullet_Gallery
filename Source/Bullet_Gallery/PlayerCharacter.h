@@ -94,6 +94,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	bool IsAiming() const { return bIsAiming; }
 
+	/**
+	 * Second copy of the body, with the head. The owner never sees it (so it cannot block the camera),
+	 * but it casts the shadow, so the shadow has a head. The first mesh (Mesh) has the head bone hidden
+	 * and is seen only by the owner.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
+	TObjectPtr<USkeletalMeshComponent> BodyMesh;
+
 	/** First-person camera at eye level */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
@@ -133,24 +141,13 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 0))
 	int32 StartReserveAmmo = 60;
 
-	/** Reload animation of the character's arms (MM_Pistol_Reload) */
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
-	TObjectPtr<UAnimSequenceBase> ReloadAnim;
+	/** Reload time, seconds (there is no reload animation) */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 0.1))
+	float ReloadTime = 1.f;
 
-	/** Slot of the Animation Blueprint the reload is played in */
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
-	FName ReloadSlotName = TEXT("Arms");
-
-	/** Reload time, seconds; 0 = the length of ReloadAnim */
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
-	float ReloadTime = 0.f;
-
-	/** Animations of the pistol itself: the slide on a shot, the clip on a reload */
+	/** Animation of the pistol itself: the slide on a shot */
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	TObjectPtr<UAnimSequenceBase> WeaponFireAnim;   // A_Fire
-
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
-	TObjectPtr<UAnimSequenceBase> WeaponReloadAnim; // A_Reload
 
 	UPROPERTY(EditDefaultsOnly, Category = "Health", meta = (ClampMin = 1))
 	float MaxHealth = 100.f;

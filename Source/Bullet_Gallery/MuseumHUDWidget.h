@@ -10,9 +10,9 @@ class UTextBlock;
 class UTexture2D;
 
 /**
- * On-screen HUD of the player: health bar, ammo bar (one step per bullet), reload hint
- * and a red flash when the player is hit. It is drawn on the screen, so it stays readable
- * whatever the camera looks at and whatever the field of view is (aiming zooms the camera).
+ * On-screen HUD of the player, kept minimal in the top-left corner:
+ * "Health" with a red bar, and "Bullets" with the numbers "in magazine / in reserve".
+ * A red frame flashes over the whole screen when the player is hit.
  * Widgets with the names below in the designer are bound automatically;
  * if the designer is empty, the same layout is built in code.
  */
@@ -22,16 +22,12 @@ class BULLET_GALLERY_API UMuseumHUDWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	/** Health bar (the guide's "Set Health" method) */
 	UFUNCTION(BlueprintCallable, Category = "HUD")
 	void SetHealth(float Health, float MaxHealth);
 
-	/** Ammo bar: fills in steps of 1 / MagazineSize */
+	/** Shows the bullets left in the magazine and in the reserve */
 	UFUNCTION(BlueprintCallable, Category = "HUD")
 	void SetAmmo(int32 AmmoInMagazine, int32 MagazineSize, int32 ReserveAmmo);
-
-	UFUNCTION(BlueprintCallable, Category = "HUD")
-	void SetReloading(bool bReloading);
 
 	/** Red flash over the screen that fades out */
 	UFUNCTION(BlueprintCallable, Category = "HUD")
@@ -46,41 +42,21 @@ protected:
 	TObjectPtr<UProgressBar> HealthProgressBar;
 
 	UPROPERTY(BlueprintReadOnly, Category = "HUD", meta = (BindWidgetOptional))
-	TObjectPtr<UProgressBar> AmmoProgressBar;
-
-	UPROPERTY(BlueprintReadOnly, Category = "HUD", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> HealthText;
-
-	UPROPERTY(BlueprintReadOnly, Category = "HUD", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> AmmoText;
 
 	UPROPERTY(BlueprintReadOnly, Category = "HUD", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> ReloadText;
-
-	UPROPERTY(BlueprintReadOnly, Category = "HUD", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> DamageOverlay;
-
-	/** Row of bright bullets: the ammo bar shows as much of it as there are bullets left */
-	UPROPERTY(EditAnywhere, Category = "Style")
-	TObjectPtr<UTexture2D> AmmoFillTexture;
-
-	/** The same row of bullets, dimmed: shows the empty places in the magazine */
-	UPROPERTY(EditAnywhere, Category = "Style")
-	TObjectPtr<UTexture2D> AmmoBackgroundTexture;
 
 	/** Red frame over the whole screen with a transparent middle */
 	UPROPERTY(EditAnywhere, Category = "Style")
 	TObjectPtr<UTexture2D> DamageOverlayTexture;
 
 	UPROPERTY(EditAnywhere, Category = "Style")
-	FLinearColor HealthColor = FLinearColor(0.85f, 0.08f, 0.06f);
+	FLinearColor HealthColor = FLinearColor(0.85f, 0.05f, 0.05f);
 
-	/** Size of each bar in the layout built in code, pixels */
+	/** Size of the health bar in the layout built in code, pixels */
 	UPROPERTY(EditAnywhere, Category = "Style")
-	FVector2D HealthBarSize = FVector2D(320.f, 26.f);
-
-	UPROPERTY(EditAnywhere, Category = "Style")
-	FVector2D AmmoBarSize = FVector2D(320.f, 52.f);
+	FVector2D HealthBarSize = FVector2D(220.f, 10.f);
 
 	/** Overlay opacity right after a hit */
 	UPROPERTY(EditAnywhere, Category = "Damage Flash")
@@ -98,13 +74,10 @@ protected:
 	float LowHealthOpacity = 0.3f;
 
 	UPROPERTY(EditAnywhere, Category = "Text")
-	FText HealthLabel = NSLOCTEXT("MuseumHUD", "Health", "HEALTH");
+	FText HealthLabel = NSLOCTEXT("MuseumHUD", "Health", "Health");
 
 	UPROPERTY(EditAnywhere, Category = "Text")
-	FText AmmoLabel = NSLOCTEXT("MuseumHUD", "Ammo", "AMMO");
-
-	UPROPERTY(EditAnywhere, Category = "Text")
-	FText ReloadLabel = NSLOCTEXT("MuseumHUD", "Reloading", "RELOADING...");
+	FText AmmoLabel = NSLOCTEXT("MuseumHUD", "Ammo", "Bullets");
 
 private:
 	/** Creates the whole HUD when the Widget Blueprint designer has no widgets */
@@ -118,8 +91,6 @@ private:
 	float CurrentHealth = 100.f;
 	float CurrentMaxHealth = 100.f;
 	int32 CurrentAmmo = 0;
-	int32 CurrentMagazineSize = 1;
 	int32 CurrentReserve = 0;
-	bool bIsReloading = false;
 	float FlashOpacity = 0.f;
 };
