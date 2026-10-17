@@ -16,6 +16,7 @@ class UInputAction;
 class UCameraShakeBase;
 class AMuseumProjectile;
 class UMuseumHUDWidget;
+class UPhysicsHandleComponent;
 
 UCLASS()
 class BULLET_GALLERY_API APlayerCharacter : public ACharacter
@@ -51,6 +52,24 @@ protected:
 	/** Creates the HUD widget and adds it to the viewport (once a player controller owns the character) */
 	void CreateHUDWidget();
 
+	/** E: picks up the physics object under the crosshair, or drops the one being carried */
+	void Interact();
+	void GrabObject();
+	/** Lets go of the carried object; with bThrow it is thrown where the camera looks */
+	void ReleaseObject(bool bThrow);
+	/** Moves the carried object in front of the camera (every frame) */
+	void UpdateHeldObject();
+	/** Physics body under the crosshair within GrabDistance, if any */
+	UPrimitiveComponent* TraceForPhysicsObject() const;
+	/** Shows on the HUD what the E key would do right now */
+	void UpdateInteractionHint();
+
+	/** Collision response to pawns of the carried object before it was picked up */
+	TEnumAsByte<ECollisionResponse> HeldObjectPawnResponse = ECR_Block;
+	/** Yaw of the carried object relative to the view, kept while carrying */
+	float HeldObjectYawOffset = 0.f;
+	FText CurrentHint;
+
 	bool bWantsToWalk = false;
 	bool bIsAiming = false;
 	bool bIsReloading = false;
@@ -74,6 +93,22 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Health")
 	bool IsDead() const { return bIsDead; }
+
+	/** Medkit: restores health up to MaxHealth. Returns false if the health is already full */
+	UFUNCTION(BlueprintCallable, Category = "Health")
+	bool AddHealth(float Amount);
+
+	/** Ammo box: adds bullets to the reserve up to MaxReserveAmmo. Returns how many were added */
+	UFUNCTION(BlueprintCallable, Category = "Weapon")
+	int32 AddAmmo(int32 Amount);
+
+	/** Short message in the middle of the screen (pickups, teleports) */
+	UFUNCTION(BlueprintCallable, Category = "UI")
+	void ShowHUDMessage(const FText& Message);
+
+	/** True while the player carries a physics object */
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	bool IsHoldingObject() const;
 
 	/** Health changed (hit by an enemy). The C++ part updates the HUD; a Blueprint can add more */
 	UFUNCTION(BlueprintNativeEvent, Category = "Health")
@@ -141,6 +176,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 0))
 	int32 StartReserveAmmo = 60;
 
+	/** The reserve cannot hold more than this; extra bullets from ammo boxes are left behind */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 0))
+	int32 MaxReserveAmmo = 90;
+
 	/** Reload time, seconds (there is no reload animation) */
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 0.1))
 	float ReloadTime = 1.f;
@@ -151,6 +190,10 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Health", meta = (ClampMin = 1))
 	float MaxHealth = 100.f;
+
+	/** Health at the start of the level (can be lower than MaxHealth so medkits are useful) */
+	UPROPERTY(EditDefaultsOnly, Category = "Health", meta = (ClampMin = 1))
+	float StartHealth = 100.f;
 
 	/** Camera shake played when an enemy hits the player */
 	UPROPERTY(EditDefaultsOnly, Category = "Health")
@@ -212,5 +255,37 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> ReloadAction;     // IA_Reload
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> InteractAction;   // IA_Interact (E)
+
+	/** Holds a picked-up physics object in front of the camera */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Interaction")
+	TObjectPtr<UPhysicsHandleComponent> PhysicsHandle;
+
+	/** How far from the camera an object can be picked up, cm */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
+	float GrabDistance = 300.f;
+
+	/** Distance from the camera to a carried object, cm */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
+	float HoldDistance = 150.f;
+
+	/** Objects heavier than this cannot be lifted, only pushed, kg */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction", meta = (ClampMin = 0))
+	float MaxGrabMass = 40.f;
+
+	/** Speed given to a thrown object, cm/s */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
+	float ThrowSpeed = 1200.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
+	FText PickUpHint = NSLOCTEXT("Player", "PickUpHint", "[E] Pick up");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
+	FText HeavyObjectHint = NSLOCTEXT("Player", "HeavyHint", "Too heavy to lift - push it");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
+	FText HoldingHint = NSLOCTEXT("Player", "HoldingHint", "[E] Drop    [LMB] Throw");
 
 };

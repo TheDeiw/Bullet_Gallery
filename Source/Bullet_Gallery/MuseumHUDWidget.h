@@ -37,6 +37,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HUD")
 	void PlayDamageFlash();
 
+	/** Hint under the crosshair (what the E key does); empty text hides it */
+	UFUNCTION(BlueprintCallable, Category = "HUD")
+	void SetInteractionHint(const FText& Hint);
+
+	/** Message in the middle of the screen that fades out after MessageDuration */
+	UFUNCTION(BlueprintCallable, Category = "HUD")
+	void ShowMessage(const FText& Message);
+
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeConstruct() override;
@@ -53,6 +61,20 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "HUD", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> DamageOverlay;
+
+	UPROPERTY(BlueprintReadOnly, Category = "HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> HintText;
+
+	UPROPERTY(BlueprintReadOnly, Category = "HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> MessageText;
+
+	/** How long a message stays fully visible before it fades, seconds */
+	UPROPERTY(EditAnywhere, Category = "Messages")
+	float MessageDuration = 1.5f;
+
+	/** How fast a message fades out, opacity per second */
+	UPROPERTY(EditAnywhere, Category = "Messages")
+	float MessageFadeSpeed = 2.f;
 
 	/** Red frame over the whole screen with a transparent middle */
 	UPROPERTY(EditAnywhere, Category = "Style")
@@ -104,4 +126,8 @@ private:
 	int32 CurrentReserve = 0;
 	bool bIsReloading = false;
 	float FlashOpacity = 0.f;
+	FText CurrentHint;
+	/** Time left before the message starts to fade; below zero it is fading */
+	float MessageTimeLeft = 0.f;
+	float MessageOpacity = 0.f;
 };

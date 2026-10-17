@@ -14,6 +14,7 @@
 #include "Engine/DamageEvents.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "PhysicsEngine/PhysicsHandleComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 
@@ -55,6 +56,14 @@ APlayerCharacter::APlayerCharacter()
 	WeaponMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh"));
 	WeaponMesh->SetupAttachment(GetMesh(), WeaponSocketName);
 	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// Carries light physics objects; soft springs so a carried vase does not jitter
+	PhysicsHandle = CreateDefaultSubobject<UPhysicsHandleComponent>(TEXT("PhysicsHandle"));
+	PhysicsHandle->LinearStiffness = 1500.f;
+	PhysicsHandle->LinearDamping = 200.f;
+	PhysicsHandle->AngularStiffness = 1500.f;
+	PhysicsHandle->AngularDamping = 500.f;
+	PhysicsHandle->InterpolationSpeed = 30.f;
 }
 
 // Called when the game starts or when spawned
@@ -83,7 +92,7 @@ void APlayerCharacter::BeginPlay()
 
 	UpdateMovementSpeed();
 
-	Health = MaxHealth;
+	Health = FMath::Clamp(StartHealth, 1.f, MaxHealth);
 	AmmoInMagazine = MagazineSize;
 	ReserveAmmo = StartReserveAmmo;
 
@@ -118,6 +127,9 @@ void APlayerCharacter::Tick(float DeltaTime)
 	const float TargetFOV = bIsAiming ? AimFOV : DefaultFOV;
 	FirstPersonCamera->SetFieldOfView(
 		FMath::FInterpTo(FirstPersonCamera->FieldOfView, TargetFOV, DeltaTime, AimInterpSpeed));
+
+	UpdateHeldObject();
+	UpdateInteractionHint();
 }
 
 // Called when the controller possessing this character changes
@@ -163,6 +175,10 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		if (ReloadAction)
 		{
 			Input->BindAction(ReloadAction, ETriggerEvent::Started, this, &APlayerCharacter::Reload);
+		}
+		if (InteractAction)
+		{
+			Input->BindAction(InteractAction, ETriggerEvent::Started, this, &APlayerCharacter::Interact);
 		}
 	}
 }
@@ -217,6 +233,13 @@ void APlayerCharacter::UpdateMovementSpeed()
 
 void APlayerCharacter::Fire()
 {
+	// While carrying an object the fire button throws it instead of shooting
+	if (IsHoldingObject())
+	{
+		ReleaseObject(true);
+		return;
+	}
+
 	UWorld* World = GetWorld();
 	if (!World || !Controller || !ProjectileClass || bIsDead || bIsReloading) { return; }
 
@@ -336,6 +359,7 @@ float APlayerCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Damag
 
 void APlayerCharacter::Die()
 {
+	ReleaseObject(false);
 	bIsDead = true;
 	bIsReloading = false;
 	GetWorldTimerManager().ClearTimer(ReloadTimer);
@@ -353,6 +377,157 @@ void APlayerCharacter::Die()
 void APlayerCharacter::RestartLevel()
 {
 	UGameplayStatics::OpenLevel(this, FName(*UGameplayStatics::GetCurrentLevelName(this, true)));
+}
+
+bool APlayerCharacter::AddHealth(float Amount)
+{
+	if (bIsDead || Amount <= 0.f || Health >= MaxHealth) { return false; }
+
+	Health = FMath::Min(Health + Amount, MaxHealth);
+	OnHealthChanged(Health, MaxHealth);
+	return true;
+}
+
+int32 APlayerCharacter::AddAmmo(int32 Amount)
+{
+	const int32 FreeSpace = MaxReserveAmmo - ReserveAmmo;
+	if (bIsDead || Amount <= 0 || FreeSpace <= 0) { return 0; }
+
+	const int32 Added = FMath::Min(Amount, FreeSpace);
+	ReserveAmmo += Added;
+	OnAmmoChanged(AmmoInMagazine, MagazineSize, ReserveAmmo);
+
+	// Picked up bullets with an empty pistol: load them straight away
+	if (AmmoInMagazine <= 0)
+	{
+		Reload();
+	}
+	return Added;
+}
+
+void APlayerCharacter::ShowHUDMessage(const FText& Message)
+{
+	if (HUDWidget && !Message.IsEmpty())
+	{
+		HUDWidget->ShowMessage(Message);
+	}
+}
+
+bool APlayerCharacter::IsHoldingObject() const
+{
+	return PhysicsHandle && PhysicsHandle->GetGrabbedComponent() != nullptr;
+}
+
+void APlayerCharacter::Interact()
+{
+	if (bIsDead) { return; }
+
+	if (IsHoldingObject())
+	{
+		ReleaseObject(false);
+	}
+	else
+	{
+		GrabObject();
+	}
+}
+
+UPrimitiveComponent* APlayerCharacter::TraceForPhysicsObject() const
+{
+	if (!Controller) { return nullptr; }
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	Controller->GetPlayerViewPoint(ViewLocation, ViewRotation);
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(GrabTrace), false, this);
+	FHitResult Hit;
+	if (!GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, ViewLocation + ViewRotation.Vector() * GrabDistance,
+		ECC_Visibility, Params))
+	{
+		return nullptr;
+	}
+
+	UPrimitiveComponent* Component = Hit.GetComponent();
+	return (Component && Component->IsSimulatingPhysics()) ? Component : nullptr;
+}
+
+void APlayerCharacter::GrabObject()
+{
+	UPrimitiveComponent* Target = TraceForPhysicsObject();
+	// Heavy objects (chests, doors) can only be pushed
+	if (!Target || Target->GetMass() > MaxGrabMass) { return; }
+
+	// The carried object must not push the player or lift them when it ends up under the feet
+	HeldObjectPawnResponse = Target->GetCollisionResponseToChannel(ECC_Pawn);
+	Target->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+	Target->WakeAllRigidBodies();
+
+	// Hold it by the middle and keep its current turn relative to the view
+	HeldObjectYawOffset = FRotator::NormalizeAxis(Target->GetComponentRotation().Yaw - Controller->GetControlRotation().Yaw);
+	PhysicsHandle->GrabComponentAtLocationWithRotation(Target, NAME_None, Target->Bounds.Origin, Target->GetComponentRotation());
+}
+
+void APlayerCharacter::UpdateHeldObject()
+{
+	if (!IsHoldingObject() || !Controller) { return; }
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	Controller->GetPlayerViewPoint(ViewLocation, ViewRotation);
+	const FVector TargetLocation = ViewLocation + ViewRotation.Vector() * HoldDistance;
+
+	// The object got stuck behind a wall or a door: let it go
+	UPrimitiveComponent* Held = PhysicsHandle->GetGrabbedComponent();
+	if (FVector::Dist(Held->Bounds.Origin, TargetLocation) > GrabDistance)
+	{
+		ReleaseObject(false);
+		return;
+	}
+
+	// Carried upright, turning together with the player
+	PhysicsHandle->SetTargetLocationAndRotation(TargetLocation, FRotator(0.f, ViewRotation.Yaw + HeldObjectYawOffset, 0.f));
+}
+
+void APlayerCharacter::ReleaseObject(bool bThrow)
+{
+	UPrimitiveComponent* Held = PhysicsHandle ? PhysicsHandle->GetGrabbedComponent() : nullptr;
+	if (!Held) { return; }
+
+	PhysicsHandle->ReleaseComponent();
+	Held->SetCollisionResponseToChannel(ECC_Pawn, HeldObjectPawnResponse);
+
+	if (bThrow && Controller)
+	{
+		FVector ViewLocation;
+		FRotator ViewRotation;
+		Controller->GetPlayerViewPoint(ViewLocation, ViewRotation);
+		// Velocity change: light and heavy objects fly at the same speed
+		Held->AddImpulse(ViewRotation.Vector() * ThrowSpeed, NAME_None, true);
+	}
+}
+
+void APlayerCharacter::UpdateInteractionHint()
+{
+	FText Hint;
+	if (IsHoldingObject())
+	{
+		Hint = HoldingHint;
+	}
+	else if (const UPrimitiveComponent* Target = TraceForPhysicsObject())
+	{
+		Hint = Target->GetMass() <= MaxGrabMass ? PickUpHint : HeavyObjectHint;
+	}
+
+	// The HUD is updated only when the hint changes
+	if (!Hint.EqualTo(CurrentHint))
+	{
+		CurrentHint = Hint;
+		if (HUDWidget)
+		{
+			HUDWidget->SetInteractionHint(Hint);
+		}
+	}
 }
 
 void APlayerCharacter::OnHealthChanged_Implementation(float NewHealth, float InMaxHealth)

@@ -102,6 +102,31 @@ void UMuseumHUDWidget::BuildDefaultLayout()
 	ReloadText = MakeText(TEXT("ReloadText"), ReloadLabel, 16);
 	ReloadText->SetVisibility(ESlateVisibility::Collapsed);
 	Rows->AddChildToVerticalBox(ReloadText);
+
+	// Hint a little below the centre of the screen (the crosshair)
+	HintText = MakeText(TEXT("HintText"), FText::GetEmpty(), 14);
+	HintText->SetJustification(ETextJustify::Center);
+	HintText->SetVisibility(ESlateVisibility::Collapsed);
+	if (UCanvasPanelSlot* HintSlot = Root->AddChildToCanvas(HintText))
+	{
+		HintSlot->SetAnchors(FAnchors(0.5f, 0.5f));
+		HintSlot->SetAlignment(FVector2D(0.5f, 0.f));
+		HintSlot->SetPosition(FVector2D(0.f, 40.f));
+		HintSlot->SetAutoSize(true);
+	}
+
+	// Pickup and teleport messages in the upper third of the screen
+	MessageText = MakeText(TEXT("MessageText"), FText::GetEmpty(), 22);
+	MessageText->SetJustification(ETextJustify::Center);
+	MessageText->SetVisibility(ESlateVisibility::HitTestInvisible);
+	MessageText->SetRenderOpacity(0.f);
+	if (UCanvasPanelSlot* MessageSlot = Root->AddChildToCanvas(MessageText))
+	{
+		MessageSlot->SetAnchors(FAnchors(0.5f, 0.3f));
+		MessageSlot->SetAlignment(FVector2D(0.5f, 0.5f));
+		MessageSlot->SetPosition(FVector2D(0.f, 0.f));
+		MessageSlot->SetAutoSize(true);
+	}
 }
 
 void UMuseumHUDWidget::NativeConstruct()
@@ -121,6 +146,37 @@ void UMuseumHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime
 		// With little health left the red frame does not fade out completely
 		const bool bLowHealth = CurrentMaxHealth > 0.f && CurrentHealth / CurrentMaxHealth <= LowHealthFraction;
 		DamageOverlay->SetRenderOpacity(FMath::Max(FlashOpacity, bLowHealth ? LowHealthOpacity : 0.f));
+	}
+
+	// The message stays for MessageDuration, then fades out
+	if (MessageOpacity > 0.f)
+	{
+		MessageTimeLeft -= InDeltaTime;
+		if (MessageTimeLeft < 0.f)
+		{
+			MessageOpacity = FMath::Max(MessageOpacity - MessageFadeSpeed * InDeltaTime, 0.f);
+		}
+		if (MessageText)
+		{
+			MessageText->SetRenderOpacity(MessageOpacity);
+		}
+	}
+}
+
+void UMuseumHUDWidget::SetInteractionHint(const FText& Hint)
+{
+	CurrentHint = Hint;
+	ApplyValues();
+}
+
+void UMuseumHUDWidget::ShowMessage(const FText& Message)
+{
+	MessageTimeLeft = MessageDuration;
+	MessageOpacity = 1.f;
+	if (MessageText)
+	{
+		MessageText->SetText(Message);
+		MessageText->SetRenderOpacity(MessageOpacity);
 	}
 }
 
@@ -163,5 +219,10 @@ void UMuseumHUDWidget::ApplyValues()
 	if (ReloadText)
 	{
 		ReloadText->SetVisibility(bIsReloading ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (HintText)
+	{
+		HintText->SetText(CurrentHint);
+		HintText->SetVisibility(CurrentHint.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
 	}
 }

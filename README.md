@@ -22,12 +22,28 @@ The level uses these packs, so add them to `Content/` after cloning:
 | `GalleryPack/` | Art Gallery pack (Fab / Epic). The `ArtGalleryAssets 5.8` project → Migrate the `GalleryPack` folder |
 | `UnrealBucket/` | Unreal Bucket Free Pack (Fab) |
 | `Fab/Modern_Staircase_Collection_3D_Model_Pack/` | Modern Staircase Collection 3D Model Pack (Fab) |
+| `CityPark/` | City Park pack (Fab). Lab 4 decor: statues, café kiosk, table, chairs, umbrella, bushes, ivy |
+| `Imported_Assets/NationalMaritimeMuseum/` | National Maritime Museum scans (Fab). Lab 4 decor: ship's wheel, charts, astrolabe, diving helmets, ... |
 
-Unused packs (`CityPark`, `FAB_Assets`, `Imported_Assets`, `DemoProject`) aren't needed.
+Unused packs (`FAB_Assets`, `DemoProject`) aren't needed.
 
 > After adding the staircase pack, open the `Wooden_Stairs` mesh and set
 > **Collision → Collision Complexity = Use Complex Collision As Simple**,
 > otherwise you can't walk up the stairs (the mesh's default collision is a single solid convex hull).
+
+> Lab 4 changed the collision of some `GalleryPack` meshes (the obstacles on floor 1 show different collision types).
+> After adding the pack, set them again in the Static Mesh Editor:
+> `SM_Display_Stand_01a`, `SM_Display_Stand_01c`, `SM_Display_Stand_01d` → one box (Remove Collision, Add Box Simplified Collision);
+> `SM_Statue_01a` → one capsule; `SM_Statue_03` → **Collision Complexity = Use Complex Collision As Simple**.
+
+## Controls
+
+WASD move, mouse look, LMB fire, RMB aim, Shift walk, R reload, Space jump,
+**E** pick up / drop a light physics object (LMB while carrying throws it).
+Walk into heavy crates and doors to push them. Medkits and ammo boxes are picked up by walking into them.
+The blue teleport pads link the museum (floor 2) and the Art Gallery hall.
+Glass doors (`BP_AutoGlassDoor`) open by themselves when you or an enemy come close; the three wooden doors are physics doors you push.
+Wall colors come from `Content/_MuseumProject/Walls` (`M_WallTwoTone`: paint above, wood paneling below, world-aligned).
 
 ## How to clone and run
 
