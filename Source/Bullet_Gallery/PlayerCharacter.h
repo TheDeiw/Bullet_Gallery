@@ -4,7 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "GenericTeamAgentInterface.h"
 #include "InputActionValue.h"
+#include "MuseumTeams.h"
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
@@ -19,13 +21,23 @@ class UMuseumHUDWidget;
 class UPhysicsHandleComponent;
 
 UCLASS()
-class BULLET_GALLERY_API APlayerCharacter : public ACharacter
+class BULLET_GALLERY_API APlayerCharacter : public ACharacter, public IGenericTeamAgentInterface
 {
 	GENERATED_BODY()
 
 public:
 	// Sets default values for this character's properties
 	APlayerCharacter();
+
+	/** The player belongs to PlayersTeam, so the guards' perception treats them as an enemy */
+	virtual FGenericTeamId GetGenericTeamId() const override;
+
+	/** Called by a blind zone when the player walks in (true) or out (false) */
+	void SetInHidingZone(bool bInside);
+
+	/** True while the player stands in a blind zone: the guards cannot see them there */
+	UFUNCTION(BlueprintPure, Category = "AI")
+	bool IsHiddenFromAI() const { return HidingZoneCount > 0; }
 
 protected:
 	// Called when the game starts or when spawned
@@ -83,6 +95,12 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMuseumHUDWidget> HUDWidget;
+
+	/** Team of the player (PlayersTeam) */
+	FPlayerTeamID TeamID;
+
+	/** Number of blind zones the player stands in (they can overlap) */
+	int32 HidingZoneCount = 0;
 
 public:
 	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent,

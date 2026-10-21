@@ -45,6 +45,20 @@ The blue teleport pads link the museum (floor 2) and the Art Gallery hall.
 Glass doors (`BP_AutoGlassDoor`) open by themselves when you or an enemy come close; the three wooden doors are physics doors you push.
 Wall colors come from `Content/_MuseumProject/Walls` (`M_WallTwoTone`: paint above, wood paneling below, world-aligned).
 
+## Lab 5: AI night guard
+
+- `BP_GuardNPC` (C++ `AGuardNPC`) is an NPC enemy driven by `BP_GuardAIController` and the behaviour tree
+  `BT_MuseumGuard` with the Blackboard `BB_MuseumGuard` (all in `Content/_MuseumProject/AI`).
+  It patrols, stops and looks around, runs and shoots when it sees the player, checks the last known location,
+  and dodges shots (the farther the shooter, the higher the chance). The Lab 3 statues stay on the level.
+- The player belongs to `PlayersTeam` (`IGenericTeamAgentInterface`), so the guard's sight reports only the player.
+- Trigger zones: `BP_PoisonZone` slows the guard down (and is an expensive nav area), `BP_BlindZone` hides the player.
+- The navigation mesh is built at runtime (`RuntimeGeneration=Dynamic` in `DefaultEngine.ini`, World Partition level);
+  `NavMesh_Floor1` covers the first floor.
+- Editor module `Bullet_GalleryEditor` rebuilds `BB_MuseumGuard` and `BT_MuseumGuard` with their editor graph:
+  set `bBuildRequested` on `/Script/Bullet_GalleryEditor.Default__GuardBehaviorTreeBuilder` (it checks the flag twice a second).
+  The Blueprint tasks `BTT_SetSpeed` and `BTT_MoveToEffectiveRange` must exist first.
+
 ## How to clone and run
 
 ```bash

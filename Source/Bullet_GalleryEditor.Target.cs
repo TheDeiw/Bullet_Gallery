@@ -11,5 +11,6 @@ public class Bullet_GalleryEditorTarget : TargetRules
 		DefaultBuildSettings = BuildSettingsVersion.V7;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_8;
 		ExtraModuleNames.Add("Bullet_Gallery");
+		ExtraModuleNames.Add("Bullet_GalleryEditor");
 	}
 }

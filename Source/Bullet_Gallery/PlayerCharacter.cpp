@@ -1,6 +1,7 @@
 #include "PlayerCharacter.h"
 
 #include "Bullet_Gallery.h"
+#include "GuardNPC.h"
 #include "MuseumHUDWidget.h"
 #include "MuseumProjectile.h"
 
@@ -12,6 +13,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/DamageEvents.h"
+#include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "PhysicsEngine/PhysicsHandleComponent.h"
@@ -293,6 +295,22 @@ void APlayerCharacter::Fire()
 	{
 		Projectile->Launch(TargetPoint);
 	}
+
+	// Guards notice a shot aimed at them and may try to dodge it
+	for (TActorIterator<AGuardNPC> It(World); It; ++It)
+	{
+		It->OnShotFired(this, MuzzleLocation, TargetPoint);
+	}
+}
+
+FGenericTeamId APlayerCharacter::GetGenericTeamId() const
+{
+	return TeamID.GetId();
+}
+
+void APlayerCharacter::SetInHidingZone(bool bInside)
+{
+	HidingZoneCount = FMath::Max(HidingZoneCount + (bInside ? 1 : -1), 0);
 }
 
 float APlayerCharacter::GetAimPitch() const

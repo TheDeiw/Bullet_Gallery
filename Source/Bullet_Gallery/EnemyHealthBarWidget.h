@@ -64,11 +64,11 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Style")
 	FMargin FramePadding = FMargin(6.f, 5.f);
 
-private:
 	/** Creates Frame and HealthProgressBar when the Widget Blueprint designer has no widgets */
-	void BuildDefaultLayout();
+	virtual void BuildDefaultLayout();
 
-	void ApplyValue();
+	/** Shows CurrentPercent on the bar */
+	virtual void ApplyValue();
 
 	/** Kept so a value set before the widget is built is not lost */
 	float CurrentPercent = 1.f;

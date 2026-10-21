@@ -10,6 +10,10 @@ public class Bullet_Gallery : ModuleRules
 
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Niagara", "UMG" });
 
+		// Lab 5: artificial intelligence (AI controller, perception, behaviour tree),
+		// gameplay tasks used by the behaviour tree tasks and the navigation system
+		PublicDependencyModuleNames.AddRange(new string[] { "AIModule", "GameplayTasks", "NavigationSystem" });
+
 		// Slate is needed for the widget styles (brushes, fonts) built in code
 		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 
