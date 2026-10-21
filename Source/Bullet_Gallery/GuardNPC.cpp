@@ -47,6 +47,10 @@ AGuardNPC::AGuardNPC()
 	// Run speed: the jog of the pistol blend space is authored for 400 cm/s
 	Movement->MaxWalkSpeed = 400.f;
 
+	// Path following must drive the movement through acceleration: the Animation Blueprints switch from
+	// Idle to Walk / Run only when the current acceleration is not zero (ShouldMove), otherwise the guard slides
+	Movement->GetNavMovementProperties()->bUseAccelerationForPaths = true;
+
 	// The mesh stands with its feet at the bottom of the capsule, facing forward
 	const float HalfHeight = GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight();
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -HalfHeight), FRotator(0.f, -90.f, 0.f));
