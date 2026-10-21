@@ -6,6 +6,7 @@
 #include "GuardHealthBarWidget.h"
 #include "PlayerCharacter.h"
 
+#include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "BrainComponent.h"
@@ -43,7 +44,8 @@ AGuardNPC::AGuardNPC()
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	Movement->bOrientRotationToMovement = true;
 	Movement->RotationRate = FRotator(0.f, 540.f, 0.f);
-	Movement->MaxWalkSpeed = 480.f;
+	// Run speed: the jog of the pistol blend space is authored for 400 cm/s
+	Movement->MaxWalkSpeed = 400.f;
 
 	// The mesh stands with its feet at the bottom of the capsule, facing forward
 	const float HalfHeight = GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight();
@@ -184,12 +186,24 @@ void AGuardNPC::Walk()
 {
 	bIsRunning = false;
 	ApplyMovementSpeed();
+	SetLocomotionAnim(PatrolAnimClass);
 }
 
 void AGuardNPC::Run()
 {
 	bIsRunning = true;
 	ApplyMovementSpeed();
+	SetLocomotionAnim(CombatAnimClass);
+}
+
+void AGuardNPC::SetLocomotionAnim(const TSubclassOf<UAnimInstance>& AnimClass)
+{
+	// Both Animation Blueprints blend idle / walk / jog by ground speed and direction;
+	// they differ in the pose of the arms (carried or aimed weapon)
+	if (AnimClass && GetMesh()->GetAnimClass() != AnimClass)
+	{
+		GetMesh()->SetAnimInstanceClass(AnimClass);
+	}
 }
 
 void AGuardNPC::SetSpeedMultiplier(float Multiplier)

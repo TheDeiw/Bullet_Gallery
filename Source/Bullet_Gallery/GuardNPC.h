@@ -10,6 +10,7 @@
 class AGuardAIController;
 class UAIPerceptionComponent;
 class UAISenseConfig_Sight;
+class UAnimInstance;
 class UAnimMontage;
 class UBlackboardComponent;
 class UEnemyHealthBarComponent;
@@ -103,6 +104,9 @@ protected:
 	/** Applies the walk / run speed multiplied by the poison slowdown */
 	void ApplyMovementSpeed();
 
+	/** Switches the skeletal mesh to another Animation Blueprint (only when it is not the current one) */
+	void SetLocomotionAnim(const TSubclassOf<UAnimInstance>& AnimClass);
+
 	UBlackboardComponent* GetBlackboard() const;
 
 	// ---------- Components ----------
@@ -151,9 +155,19 @@ protected:
 	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "Movement")
 	float WalkSpeed = 0.f;
 
-	/** Walk speed as a part of the run speed */
+	/** Walk speed as a part of the run speed. 0.75 of the 400 cm/s run is the 300 cm/s walk speed of BS_Idle_Walk_Run */
 	UPROPERTY(EditAnywhere, Category = "Movement", meta = (ClampMin = 0.1, ClampMax = 1))
-	float WalkSpeedFraction = 0.4f;
+	float WalkSpeedFraction = 0.75f;
+
+	// ---------- Movement animations ----------
+
+	/** Animation Blueprint while patrolling and investigating: relaxed walk, the revolver is carried at the side */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation")
+	TSubclassOf<UAnimInstance> PatrolAnimClass;
+
+	/** Animation Blueprint while chasing and fighting: the revolver is held aimed, jog */
+	UPROPERTY(EditDefaultsOnly, Category = "Animation")
+	TSubclassOf<UAnimInstance> CombatAnimClass;
 
 	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "Movement")
 	bool bIsRunning = false;
