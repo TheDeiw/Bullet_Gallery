@@ -19,7 +19,7 @@ enum class EAIObstacleZoneType : uint8
 	BlindZone
 };
 
-/** Navigation area of the poison zone: walking through it costs more, so the guards prefer to go around */
+/** Navigation area of the poison zone: it costs the same as a normal floor, so the guards do not go around it */
 UCLASS()
 class BULLET_GALLERY_API UNavArea_Poison : public UNavArea
 {
@@ -32,7 +32,7 @@ public:
 /**
  * Obstacle for the AI guard made with a trigger volume.
  * PoisonSlow: a guard that enters is slowed down (SpeedMultiplier) until it leaves; the zone is also
- * marked on the navigation mesh with an expensive area, so the path finding avoids it when it can.
+ * marked on the navigation mesh with its own area (normal cost), so the path finding does not avoid it.
  * BlindZone: while the player stands inside, the guards' sight ignores them ("blind spot").
  */
 UCLASS()

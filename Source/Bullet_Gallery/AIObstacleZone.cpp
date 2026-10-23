@@ -13,8 +13,9 @@
 
 UNavArea_Poison::UNavArea_Poison()
 {
-	// Five times as expensive as a normal floor: a short detour is better, a long one is not
-	DefaultCost = 5.f;
+	// Same cost as a normal floor: the guard does not avoid the poison zone, it walks straight through it
+	// and is slowed down there (see AAIObstacleZone::OnZoneBeginOverlap)
+	DefaultCost = 1.f;
 	DrawColor = FColor(90, 200, 40);
 }
 
