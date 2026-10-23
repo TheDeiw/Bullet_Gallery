@@ -10,7 +10,6 @@
 class AGuardAIController;
 class UAIPerceptionComponent;
 class UAISenseConfig_Sight;
-class UAnimInstance;
 class UAnimMontage;
 class UBlackboardComponent;
 class UEnemyHealthBarComponent;
@@ -68,6 +67,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	float GetWeaponEffectiveRange() const { return WeaponEffectiveRange; }
 
+	/** 0 = revolver lowered, 1 = aimed; read by UGuardAnimInstance every frame */
+	UFUNCTION(BlueprintPure, Category = "Weapon")
+	float GetWeaponRaiseAlpha() const { return WeaponRaiseAlpha; }
+
+	/** The guard wants the revolver up: the player is seen within range */
+	UFUNCTION(BlueprintPure, Category = "Weapon")
+	bool IsWeaponRaised() const { return bWeaponRaised; }
+
+	/** The revolver is (almost) fully raised: only then can the guard shoot */
+	UFUNCTION(BlueprintPure, Category = "Weapon")
+	bool IsWeaponReady() const { return WeaponRaiseAlpha >= 0.95f; }
+
 	/** The player fired from From towards To. If the shot passes close, the guard gets ready to dodge */
 	void OnShotFired(AActor* Shooter, const FVector& From, const FVector& To);
 
@@ -104,8 +115,8 @@ protected:
 	/** Applies the walk / run speed multiplied by the poison slowdown */
 	void ApplyMovementSpeed();
 
-	/** Switches the skeletal mesh to another Animation Blueprint (only when it is not the current one) */
-	void SetLocomotionAnim(const TSubclassOf<UAnimInstance>& AnimClass);
+	/** Decides whether the revolver should be up and moves WeaponRaiseAlpha towards it */
+	void UpdateWeaponRaise(float DeltaTime);
 
 	UBlackboardComponent* GetBlackboard() const;
 
@@ -159,16 +170,6 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Movement", meta = (ClampMin = 0.1, ClampMax = 1))
 	float WalkSpeedFraction = 0.75f;
 
-	// ---------- Movement animations ----------
-
-	/** Animation Blueprint while patrolling and investigating: relaxed walk, the revolver is carried at the side */
-	UPROPERTY(EditDefaultsOnly, Category = "Animation")
-	TSubclassOf<UAnimInstance> PatrolAnimClass;
-
-	/** Animation Blueprint while chasing and fighting: the revolver is held aimed, jog */
-	UPROPERTY(EditDefaultsOnly, Category = "Animation")
-	TSubclassOf<UAnimInstance> CombatAnimClass;
-
 	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "Movement")
 	bool bIsRunning = false;
 
@@ -177,6 +178,25 @@ protected:
 	/** The guard comes this close to the player and shoots, cm */
 	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = "Weapon")
 	float WeaponEffectiveRange = 900.f;
+
+	/** Seconds to raise the revolver from the lowered pose into the aim (and to lower it back) */
+	UPROPERTY(EditAnywhere, Category = "Weapon", meta = (ClampMin = 0.05))
+	float RaiseTime = 0.4f;
+
+	/** The revolver goes up when the seen player is closer than WeaponEffectiveRange * RaiseRangeFactor
+	 *  (the same tolerance as the Shoot Target task, so the guard never waits in range with a lowered gun) */
+	UPROPERTY(EditAnywhere, Category = "Weapon", meta = (ClampMin = 0.1))
+	float RaiseRangeFactor = 1.25f;
+
+	/** ...and goes down only beyond WeaponEffectiveRange * LowerRangeFactor or when the player is not seen (no flicker at the edge) */
+	UPROPERTY(EditAnywhere, Category = "Weapon", meta = (ClampMin = 0.1))
+	float LowerRangeFactor = 1.5f;
+
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "Weapon")
+	bool bWeaponRaised = false;
+
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "Weapon")
+	float WeaponRaiseAlpha = 0.f;
 
 	/** Small damage of one shot (the player has 100 health) */
 	UPROPERTY(EditAnywhere, Category = "Weapon")

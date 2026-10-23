@@ -166,6 +166,7 @@ void AGuardNPC::Tick(float DeltaTime)
 
 	// The perception reports only changes; a blind zone can hide the player without one
 	UpdateLineOfSight();
+	UpdateWeaponRaise(DeltaTime);
 
 	UBlackboardComponent* Blackboard = GetBlackboard();
 	if (!Blackboard) { return; }
@@ -186,28 +187,40 @@ void AGuardNPC::Tick(float DeltaTime)
 	}
 }
 
+void AGuardNPC::UpdateWeaponRaise(float DeltaTime)
+{
+	if (bHasLineOfSight && PerceivedActor)
+	{
+		const float Distance = FVector::Dist(GetActorLocation(), PerceivedActor->GetActorLocation());
+		if (Distance <= WeaponEffectiveRange * RaiseRangeFactor)
+		{
+			bWeaponRaised = true;
+		}
+		else if (Distance > WeaponEffectiveRange * LowerRangeFactor)
+		{
+			bWeaponRaised = false;
+		}
+	}
+	else
+	{
+		bWeaponRaised = false;
+	}
+
+	// Constant speed: a full raise or lower takes RaiseTime; ABP_Guard blends the aimed upper body by this weight
+	WeaponRaiseAlpha = FMath::FInterpConstantTo(WeaponRaiseAlpha, bWeaponRaised ? 1.f : 0.f, DeltaTime, 1.f / RaiseTime);
+}
+
+// The animation follows the speed by itself (ABP_Guard blend spaces), so Walk / Run only change the speed
 void AGuardNPC::Walk()
 {
 	bIsRunning = false;
 	ApplyMovementSpeed();
-	SetLocomotionAnim(PatrolAnimClass);
 }
 
 void AGuardNPC::Run()
 {
 	bIsRunning = true;
 	ApplyMovementSpeed();
-	SetLocomotionAnim(CombatAnimClass);
-}
-
-void AGuardNPC::SetLocomotionAnim(const TSubclassOf<UAnimInstance>& AnimClass)
-{
-	// Both Animation Blueprints blend idle / walk / jog by ground speed and direction;
-	// they differ in the pose of the arms (carried or aimed weapon)
-	if (AnimClass && GetMesh()->GetAnimClass() != AnimClass)
-	{
-		GetMesh()->SetAnimInstanceClass(AnimClass);
-	}
 }
 
 void AGuardNPC::SetSpeedMultiplier(float Multiplier)
@@ -229,6 +242,9 @@ bool AGuardNPC::FireAt(AActor* Target)
 	// Face the target: it may keep moving
 	const FVector ToTarget = Target->GetActorLocation() - GetActorLocation();
 	SetActorRotation(FRotator(0.f, ToTarget.Rotation().Yaw, 0.f));
+
+	// No shots with a lowered revolver: wait until the raise is finished
+	if (!IsWeaponReady()) { return false; }
 
 	if (FireMontage)
 	{

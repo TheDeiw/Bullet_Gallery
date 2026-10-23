@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Animation/AnimNotifies/AnimNotify.h"
 #include "GameFramework/Character.h"
 #include "GenericTeamAgentInterface.h"
 #include "InputActionValue.h"
@@ -54,6 +55,13 @@ protected:
 	void StartAim();
 	void StopAim();
 	void Reload();
+	/** Montage Notify "RoundsInserted" of ReloadMontage: one pass of the loop section pushed rounds in */
+	UFUNCTION()
+	void OnReloadNotify(FName NotifyName, const FBranchingPointNotifyPayload& BranchingPointPayload);
+	/** Moves up to Count rounds from the reserve into the magazine */
+	void LoadRounds(int32 Count);
+	/** The reload montage started to blend out (finished or interrupted): firing is allowed again */
+	void OnReloadMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
 	void FinishReload();
 	void Die();
 	void RestartLevel();
@@ -90,7 +98,6 @@ protected:
 	float Health = 100.f;
 	int32 AmmoInMagazine = 0;
 	int32 ReserveAmmo = 0;
-	FTimerHandle ReloadTimer;
 	FTimerHandle RestartTimer;
 
 	UPROPERTY(Transient)
@@ -198,9 +205,20 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 0))
 	int32 MaxReserveAmmo = 90;
 
-	/** Reload time, seconds (there is no reload animation) */
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 0.1))
-	float ReloadTime = 1.f;
+	/**
+	 * Reload montage (AM_Player_Reload): ReloadStart lowers the pistol, ReloadLoop repeats while rounds are pushed in
+	 * (each pass fires the "RoundsInserted" notify), ReloadEnd raises it. Without it the magazine is filled at once.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TObjectPtr<UAnimMontage> ReloadMontage;
+
+	/** Rounds pushed in during one pass of the ReloadLoop section (half a stripper clip) */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 1))
+	int32 RoundsPerCycle = 5;
+
+	/** Animation of the pistol itself during the reload */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TObjectPtr<UAnimSequenceBase> WeaponReloadAnim;   // A_Reload
 
 	/** Animation of the pistol itself: the slide on a shot */
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")

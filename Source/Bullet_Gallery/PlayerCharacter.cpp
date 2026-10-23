@@ -88,6 +88,12 @@ void APlayerCharacter::BeginPlay()
 	BodyMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
 	BodyMesh->SetAnimInstanceClass(GetMesh()->GetAnimClass());
 
+	// Every pass through the reload loop section reports "RoundsInserted"
+	if (UAnimInstance* Anim = GetMesh()->GetAnimInstance())
+	{
+		Anim->OnPlayMontageNotifyBegin.AddDynamic(this, &APlayerCharacter::OnReloadNotify);
+	}
+
 	// Attach the weapon to the skeleton socket (also picks up a socket name overridden in the Blueprint)
 	WeaponMesh->AttachToComponent(GetMesh(),
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale, WeaponSocketName);
@@ -326,22 +332,69 @@ void APlayerCharacter::Reload()
 	bIsReloading = true;
 	OnReloadStateChanged(true);
 
-	// No animation: the magazine is simply refilled after ReloadTime
-	GetWorldTimerManager().SetTimer(ReloadTimer, this, &APlayerCharacter::FinishReload, FMath::Max(ReloadTime, 0.1f), false);
+	UAnimInstance* Anim = GetMesh()->GetAnimInstance();
+	if (!ReloadMontage || !Anim || Anim->Montage_Play(ReloadMontage) <= 0.f)
+	{
+		// No montage to play: fill the magazine at once
+		LoadRounds(MagazineSize);
+		FinishReload();
+		return;
+	}
+	FOnMontageBlendingOutStarted BlendingOut = FOnMontageBlendingOutStarted::CreateUObject(this, &APlayerCharacter::OnReloadMontageBlendingOut);
+	Anim->Montage_SetBlendingOutDelegate(BlendingOut, ReloadMontage);
+
+	// The shadow body plays the same montage, the pistol its own reload animation
+	if (UAnimInstance* BodyAnim = BodyMesh->GetAnimInstance())
+	{
+		BodyAnim->Montage_Play(ReloadMontage);
+	}
+	if (WeaponReloadAnim)
+	{
+		WeaponMesh->PlayAnimation(WeaponReloadAnim, false);
+	}
+}
+
+void APlayerCharacter::OnReloadNotify(FName NotifyName, const FBranchingPointNotifyPayload& BranchingPointPayload)
+{
+	if (!bIsReloading || bIsDead || NotifyName != TEXT("RoundsInserted")) { return; }
+
+	LoadRounds(RoundsPerCycle);
+
+	// Magazine full or nothing left: leave the loop, the next section raises the pistol
+	if (AmmoInMagazine >= MagazineSize || ReserveAmmo <= 0)
+	{
+		for (UAnimInstance* Anim : { GetMesh()->GetAnimInstance(), BodyMesh->GetAnimInstance() })
+		{
+			if (Anim)
+			{
+				Anim->Montage_SetNextSection(TEXT("ReloadLoop"), TEXT("ReloadEnd"), ReloadMontage);
+			}
+		}
+	}
+}
+
+void APlayerCharacter::LoadRounds(int32 Count)
+{
+	const int32 Loaded = FMath::Min3(Count, MagazineSize - AmmoInMagazine, ReserveAmmo);
+	if (Loaded <= 0) { return; }
+
+	AmmoInMagazine += Loaded;
+	ReserveAmmo -= Loaded;
+	OnAmmoChanged(AmmoInMagazine, MagazineSize, ReserveAmmo);
+}
+
+void APlayerCharacter::OnReloadMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted)
+{
+	// Also when interrupted: the rounds already pushed in stay in the magazine
+	FinishReload();
 }
 
 void APlayerCharacter::FinishReload()
 {
-	if (bIsDead) { return; }
-
-	// Move bullets from the reserve into the magazine
-	const int32 Loaded = FMath::Min(MagazineSize - AmmoInMagazine, ReserveAmmo);
-	AmmoInMagazine += Loaded;
-	ReserveAmmo -= Loaded;
+	if (!bIsReloading) { return; }
 
 	bIsReloading = false;
 	OnReloadStateChanged(false);
-	OnAmmoChanged(AmmoInMagazine, MagazineSize, ReserveAmmo);
 }
 
 float APlayerCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
@@ -380,7 +433,6 @@ void APlayerCharacter::Die()
 	ReleaseObject(false);
 	bIsDead = true;
 	bIsReloading = false;
-	GetWorldTimerManager().ClearTimer(ReloadTimer);
 
 	if (APlayerController* PC = Cast<APlayerController>(Controller))
 	{
@@ -566,7 +618,7 @@ void APlayerCharacter::OnAmmoChanged_Implementation(int32 InAmmoInMagazine, int3
 
 void APlayerCharacter::OnReloadStateChanged_Implementation(bool bReloading)
 {
-	// Only the "Reloading..." title is shown, there is no reload animation
+	// The HUD shows "Reloading..." while the reload montage plays
 	if (HUDWidget)
 	{
 		HUDWidget->SetReloading(bReloading);
