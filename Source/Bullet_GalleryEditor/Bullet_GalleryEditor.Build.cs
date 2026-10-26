@@ -19,6 +19,7 @@ public class Bullet_GalleryEditor : ModuleRules
 			"GraphEditor",
 			"UnrealEd",
 			"AssetRegistry",
+			"AssetTools",
 			"Kismet"
 		});
 

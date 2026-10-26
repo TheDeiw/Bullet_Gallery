@@ -1,5 +1,6 @@
 #include "GuardBehaviorTreeBuilder.h"
 #include "Lab6AssetBuilder.h"
+#include "Lab6FbxImporter.h"
 
 #include "Containers/Ticker.h"
 #include "Modules/ModuleManager.h"
@@ -27,6 +28,13 @@ public:
 				Lab6Builder->bBuildRequested = false;
 				Lab6Builder->LastResult = Lab6Builder->BuildAll();
 				UE_LOG(LogTemp, Display, TEXT("Lab6Assets: %s"), *Lab6Builder->LastResult);
+			}
+			ULab6FbxImporter* Importer = GetMutableDefault<ULab6FbxImporter>();
+			if (Importer->bImportRequested)
+			{
+				Importer->bImportRequested = false;
+				Importer->LastResult = Importer->ImportAll();
+				UE_LOG(LogTemp, Display, TEXT("Lab6Fbx: %s"), *Importer->LastResult);
 			}
 			return true;
 		}), 0.5f);
