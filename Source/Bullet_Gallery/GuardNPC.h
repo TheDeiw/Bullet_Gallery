@@ -4,6 +4,7 @@
 #include "GameFramework/Character.h"
 #include "GenericTeamAgentInterface.h"
 #include "MuseumTeams.h"
+#include "MuseumTypes.h"
 #include "Perception/AIPerceptionTypes.h"
 #include "GuardNPC.generated.h"
 
@@ -14,6 +15,8 @@ class UAnimMontage;
 class UBlackboardComponent;
 class UEnemyHealthBarComponent;
 class UNiagaraSystem;
+class USoundAttenuation;
+class USoundBase;
 class USkeletalMeshComponent;
 
 /**
@@ -94,6 +97,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Health")
 	bool IsDead() const { return bIsDead; }
 
+	/** Tougher / weaker version of the Blueprint's guard (call between deferred spawn and finish) */
+	void ApplyVariant(const FEnemyVariant& InVariant);
+
+	/** Wave guards start with the player already noticed and keep knowing where they are */
+	void AlertTo(AActor* Target);
+
 	float GetDodgeDuration() const { return DodgeDuration; }
 
 protected:
@@ -157,6 +166,23 @@ protected:
 	/** A shot passing closer than this to the guard is noticed (and may be dodged), cm */
 	UPROPERTY(EditAnywhere, Category = "AI")
 	float ShotNoticeRadius = 150.f;
+
+	// ---------- Sounds (3D, heard from where the guard stands) ----------
+
+	/** Revolver shot, played at the muzzle in FireAt */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio")
+	TObjectPtr<USoundBase> ShotSound;
+
+	/** Played once when the guard goes from "nobody noticed" to a target */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio")
+	TObjectPtr<USoundBase> AlertSound;
+
+	/** Falloff of the two sounds above */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio")
+	TObjectPtr<USoundAttenuation> SoundAttenuation;
+
+	/** PerceivedActor was set on the last Tick (the alert sound has been played for it) */
+	bool bWasAlerted = false;
 
 	// ---------- Movement ----------
 
@@ -246,6 +272,11 @@ protected:
 private:
 	/** Team of the guards (GuardsTeam) */
 	FGuardTeamID TeamID;
+
+	FEnemyVariant Variant;
+	bool bHunter = false;
+	bool bLastHitHeadshot = false;
+	float HunterRefreshElapsed = 0.f;
 
 	UPROPERTY(Transient)
 	TObjectPtr<AGuardAIController> GuardController;

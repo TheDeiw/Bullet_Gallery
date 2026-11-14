@@ -28,6 +28,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Health")
 	void UpdateHealthValue();
 
+	/** Sets both the maximum and the current health (used when the wave director spawns a tougher or weaker variant) */
+	void SetMaxHealth(float NewMax);
+
 	UFUNCTION(BlueprintPure, Category = "Health")
 	float GetHealth() const { return Health; }
 

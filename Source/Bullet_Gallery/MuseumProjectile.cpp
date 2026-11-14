@@ -87,7 +87,8 @@ void AMuseumProjectile::Tick(float DeltaTime)
 	if (Traveled <= PathLength)
 	{
 		const float S = Traveled / PathLength;
-		NewLocation = FMath::Lerp(StartPoint, TargetPoint, S) + ComputeOffset(S);
+		// Random spread disabled for Lab 6; uncomment to bring it back
+		NewLocation = FMath::Lerp(StartPoint, TargetPoint, S) /* + ComputeOffset(S) */;
 	}
 	else
 	{
@@ -106,10 +107,11 @@ void AMuseumProjectile::Tick(float DeltaTime)
 	FHitResult Hit;
 	SetActorLocation(NewLocation, true, &Hit);
 
-	if (bDrawTrail)
-	{
-		DrawDebugLine(GetWorld(), OldLocation, GetActorLocation(), FColor::Orange, false, TrailLifeTime, 0, 1.f);
-	}
+	// Bullet trail disabled for Lab 6; uncomment to bring it back
+	// if (bDrawTrail)
+	// {
+	// 	DrawDebugLine(GetWorld(), OldLocation, GetActorLocation(), FColor::Orange, false, TrailLifeTime, 0, 1.f);
+	// }
 
 	if (Hit.bBlockingHit)
 	{
@@ -151,7 +153,7 @@ void AMuseumProjectile::HandleImpact(const FHitResult& Hit, const FVector& Fligh
 
 	if (AActor* HitActor = Hit.GetActor())
 	{
-		UGameplayStatics::ApplyPointDamage(HitActor, Damage, FlightDirection, Hit,
+		UGameplayStatics::ApplyPointDamage(HitActor, Damage * DamageScale, FlightDirection, Hit,
 			GetInstigatorController(), this, UDamageType::StaticClass());
 	}
 

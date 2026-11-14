@@ -14,6 +14,7 @@ class USoundBase;
  * Bullet that flies to the point under the crosshair along a partly random spiral.
  * The curve is an offset added to the straight muzzle-to-target line; the offset is
  * multiplied by an envelope that is zero at both ends, so the bullet always lands on the target point.
+ * Lab 6: the offset is switched off in Tick (commented out), so the bullets fly straight.
  */
 UCLASS()
 class BULLET_GALLERY_API AMuseumProjectile : public AActor
@@ -27,6 +28,9 @@ public:
 
 	/** Starts the flight from the current location to the point under the crosshair */
 	void Launch(const FVector& InTargetPoint);
+
+	/** Perks make the player's bullets hit harder: 1 = the Blueprint's damage */
+	void SetDamageScale(float Scale) { DamageScale = Scale; }
 
 protected:
 	/** Sideways offset from the straight line at path fraction S (0 = muzzle, 1 = target) */
@@ -78,7 +82,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Trajectory")
 	float MaxFlightDistance = 50000.f;
 
-	/** Draws the flown path as a line for a short time */
+	/** Draws the flown path as a line for a short time (Lab 6: the drawing is commented out in Tick) */
 	UPROPERTY(EditDefaultsOnly, Category = "Trajectory")
 	bool bDrawTrail = true;
 
@@ -109,6 +113,7 @@ protected:
 	float Damage = 25.f;
 
 private:
+	float DamageScale = 1.f;
 	FVector StartPoint = FVector::ZeroVector;
 	FVector TargetPoint = FVector::ZeroVector;
 

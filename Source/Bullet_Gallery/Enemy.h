@@ -2,11 +2,15 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "MuseumTypes.h"
 #include "Enemy.generated.h"
 
 class UAnimSequenceBase;
 class UEnemyHealthBarComponent;
 class UNiagaraSystem;
+class UPointLightComponent;
+class USoundAttenuation;
+class USoundBase;
 
 /** What the enemy is doing right now */
 UENUM(BlueprintType)
@@ -46,6 +50,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Enemy")
 	bool IsDead() const { return State == EEnemyState::Dead; }
 
+	/** Tougher / faster / bigger version of the Blueprint's enemy (call before BeginPlay, i.e. between deferred spawn and finish) */
+	void ApplyVariant(const FEnemyVariant& InVariant);
+
+	/** 0..1 */
+	float GetHealthFraction() const;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -61,6 +71,8 @@ protected:
 	bool CanSeePlayer() const;
 
 	void MoveTowards(const FVector& Location);
+	/** Follows a navigation-mesh path to the goal (rebuilt twice a second), straight when the goal is near and in sight */
+	void MoveAlongNav(const FVector& Goal, float DeltaTime);
 	void FaceTowards(const FVector& Location, float DeltaTime);
 	int32 FindNearestRoutePoint() const;
 
@@ -103,6 +115,18 @@ protected:
 	/** The player is noticed inside this radius if nothing blocks the view, cm */
 	UPROPERTY(EditAnywhere, Category = "Enemy|Chase")
 	float DetectionRadius = 1200.f;
+
+	/** Played once when a patrolling statue notices the player and starts the chase */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Chase")
+	TObjectPtr<USoundBase> AlertSound;
+
+	/** Punch landing on the player (ApplyAttackHit): a random one of these */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Attack")
+	TArray<TObjectPtr<USoundBase>> PunchSounds;
+
+	/** Falloff of AlertSound */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Chase")
+	TObjectPtr<USoundAttenuation> SoundAttenuation;
 
 	/** The chase stops when the player is farther than this, cm */
 	UPROPERTY(EditAnywhere, Category = "Enemy|Chase")
@@ -179,6 +203,16 @@ protected:
 	float ShatterDelay = 0.4f;
 
 private:
+	FEnemyVariant Variant;
+	bool bHunter = false;
+	bool bLastHitHeadshot = false;
+	TArray<FVector> PathPoints;
+	int32 PathIndex = 0;
+	float RepathTimer = 0.f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UPointLightComponent> AuraLight;
+
 	EEnemyState State = EEnemyState::Patrol;
 
 	TArray<FVector> PatrolRoute;

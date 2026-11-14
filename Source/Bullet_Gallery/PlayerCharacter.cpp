@@ -2,8 +2,11 @@
 
 #include "Bullet_Gallery.h"
 #include "GuardNPC.h"
+#include "MuseumDirector.h"
 #include "MuseumHUDWidget.h"
+#include "MuseumUserSettings.h"
 #include "MuseumProjectile.h"
+#include "PlayerAnimInstance.h"
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -11,14 +14,38 @@
 #include "Camera/CameraComponent.h"
 #include "Camera/CameraShakeBase.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
+#include "Components/PointLightComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/DamageEvents.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "NiagaraFunctionLibrary.h"
 #include "PhysicsEngine/PhysicsHandleComponent.h"
+#include "Sound/SoundBase.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+
+namespace
+{
+	// Layout of SM_StripperClip / SM_ClipRound (Lab6/Blender/make_stripper_clip.py): rounds stacked up from the bottom of the strip, cm
+	constexpr int32 ClipCapacity = 10;
+	constexpr float ClipFirstRoundZ = 0.75f;
+	constexpr float ClipRoundPitch = 1.26f;
+	constexpr float ClipRoundRadius = 0.62f;
+	constexpr float ClipHeight = 13.6f;
+	// How fast the thumb pushes the stack down, cm/s (in the model's units)
+	constexpr float RoundSlideSpeed = 30.f;
+	// The clip is drawn smaller than the model, so that it fits inside the pistol's magazine and can hide there
+	constexpr float ClipScale = 0.6f;
+	// Montage time spans: the clip rises out of the pistol (start of ReloadStart) and is pushed back in (start of ReloadEnd;
+	// UPlayerAnimInstance::BlendOutTime starts when this ends)
+	const FVector2f ClipRiseTime(0.f, 0.15f);
+	const FVector2f ClipSinkTime(1.2f, 1.35f);
+}
 
 // Sets default values
 APlayerCharacter::APlayerCharacter()
@@ -54,10 +81,46 @@ APlayerCharacter::APlayerCharacter()
 	FirstPersonCamera->bUsePawnControlRotation = true;
 	FirstPersonCamera->SetFieldOfView(DefaultFOV);
 
+	// Flashlight: a warm spot light that follows the view; it does not light the player's own arms (they are lit by the world)
+	Flashlight = CreateDefaultSubobject<USpotLightComponent>(TEXT("Flashlight"));
+	Flashlight->SetupAttachment(FirstPersonCamera);
+	// Not inverse-square: a close wall or enemy must not blow out (the arms and the weapon are only centimetres from the lens)
+	Flashlight->SetRelativeLocation(FVector(30.f, 0.f, 0.f));
+	Flashlight->bUseInverseSquaredFalloff = false;
+	Flashlight->IntensityUnits = ELightUnits::Unitless;
+	Flashlight->SetIntensity(4.f);
+	Flashlight->SetLightFalloffExponent(2.f);
+	Flashlight->SetLightColor(FLinearColor(1.f, 0.93f, 0.8f));
+	Flashlight->SetAttenuationRadius(2800.f);
+	Flashlight->SetInnerConeAngle(8.f);
+	Flashlight->SetOuterConeAngle(32.f);
+	Flashlight->SetCastShadows(true);
+	Flashlight->SetVisibility(true);
+
 	// Weapon: created in the constructor so it is visible in the Blueprint viewport
 	WeaponMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh"));
 	WeaponMesh->SetupAttachment(GetMesh(), WeaponSocketName);
 	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// Stripper clip for the reload, hidden until the left hand takes it; UpdateReloadClip places it every frame
+	ClipMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ClipMesh"));
+	ClipMesh->SetupAttachment(WeaponMesh, ClipGuideSocketName);
+	ClipMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ClipMesh->SetCastShadow(false);
+	ClipRounds = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("ClipRounds"));
+	ClipRounds->SetupAttachment(ClipMesh);
+	ClipRounds->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ClipRounds->SetCastShadow(false);
+
+	// Warm flash at the muzzle, switched on for a moment on every shot
+	MuzzleLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("MuzzleLight"));
+	MuzzleLight->SetupAttachment(WeaponMesh, MuzzleSocketName);
+	MuzzleLight->IntensityUnits = ELightUnits::Candelas;
+	MuzzleLight->Intensity = 150.f;
+	MuzzleLight->AttenuationRadius = 400.f;
+	MuzzleLight->LightColor = FColor(255, 170, 80);
+	MuzzleLight->CastShadows = false;
+	MuzzleLight->SetVisibility(false);
 
 	// Carries light physics objects; soft springs so a carried vase does not jitter
 	PhysicsHandle = CreateDefaultSubobject<UPhysicsHandleComponent>(TEXT("PhysicsHandle"));
@@ -103,8 +166,17 @@ void APlayerCharacter::BeginPlay()
 	Health = FMath::Clamp(StartHealth, 1.f, MaxHealth);
 	AmmoInMagazine = MagazineSize;
 	ReserveAmmo = StartReserveAmmo;
+	BaseMaxHealth = MaxHealth;
+	BaseMaxReserveAmmo = MaxReserveAmmo;
+	CameraBaseLocation = FirstPersonCamera->GetRelativeLocation();
 
 	CreateHUDWidget();
+
+	// The game director plays the music itself (it keeps playing in the menus); without it the player does
+	if (MusicSound && !UMuseumDirector::Get(this))
+	{
+		UGameplayStatics::SpawnSound2D(this, MusicSound, MusicVolume);
+	}
 }
 
 void APlayerCharacter::CreateHUDWidget()
@@ -132,12 +204,44 @@ void APlayerCharacter::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	// Smoothly zoom the camera in while aiming and back out when released
-	const float TargetFOV = bIsAiming ? AimFOV : DefaultFOV;
+	const UMuseumUserSettings* Settings = UMuseumUserSettings::Get();
+	const float BaseFOV = Settings ? Settings->FieldOfView : DefaultFOV;
+	const float TargetFOV = (bIsAiming ? BaseFOV * (AimFOV / DefaultFOV) : BaseFOV) + ShotFovKick;
 	FirstPersonCamera->SetFieldOfView(
 		FMath::FInterpTo(FirstPersonCamera->FieldOfView, TargetFOV, DeltaTime, AimInterpSpeed));
+	UpdateCameraFeel(DeltaTime);
 
 	UpdateHeldObject();
 	UpdateInteractionHint();
+
+	// Footsteps: one step every JogStepDistance / WalkStepDistance travelled on the ground
+	if (!bIsDead && GetCharacterMovement()->IsMovingOnGround() && FootstepSounds.Num() > 0)
+	{
+		StepTravelled += GetVelocity().Size2D() * DeltaTime;
+		if (StepTravelled >= ((bWantsToWalk || bIsAiming) ? WalkStepDistance : JogStepDistance))
+		{
+			StepTravelled = 0.f;
+			UGameplayStatics::PlaySound2D(this, FootstepSounds[FMath::RandHelper(FootstepSounds.Num())], 1.f, FMath::FRandRange(0.92f, 1.08f));
+		}
+	}
+	else
+	{
+		StepTravelled = 0.f;
+	}
+
+	if (bDebugReload)
+	{
+		bDebugReload = false;
+		AmmoInMagazine = 0;
+		OnAmmoChanged(AmmoInMagazine, MagazineSize, ReserveAmmo);
+		Reload();
+	}
+	if (bDebugFire)
+	{
+		bDebugFire = false;
+		Fire();
+	}
+	UpdateReloadClip(DeltaTime);
 }
 
 // Called when the controller possessing this character changes
@@ -205,8 +309,10 @@ void APlayerCharacter::Move(const FInputActionValue& Value)
 void APlayerCharacter::Look(const FInputActionValue& Value)
 {
 	const FVector2D Axis = Value.Get<FVector2D>();
-	AddControllerYawInput(Axis.X);
-	AddControllerPitchInput(Axis.Y);
+	const UMuseumUserSettings* Settings = UMuseumUserSettings::Get();
+	const float Sensitivity = Settings ? Settings->MouseSensitivity : 1.f;
+	AddControllerYawInput(Axis.X * Sensitivity);
+	AddControllerPitchInput(Axis.Y * Sensitivity * ((Settings && Settings->bInvertY) ? -1.f : 1.f));
 }
 
 void APlayerCharacter::StartWalk()
@@ -236,7 +342,7 @@ void APlayerCharacter::StopAim()
 void APlayerCharacter::UpdateMovementSpeed()
 {
 	// Aiming also slows the character down to a walk for a steadier shot
-	GetCharacterMovement()->MaxWalkSpeed = (bWantsToWalk || bIsAiming) ? WalkSpeed : JogSpeed;
+	GetCharacterMovement()->MaxWalkSpeed = ((bWantsToWalk || bIsAiming) ? WalkSpeed : JogSpeed) * MoveSpeedMult;
 }
 
 void APlayerCharacter::Fire()
@@ -260,7 +366,7 @@ void APlayerCharacter::Fire()
 
 	// Fire rate limit
 	const float Now = World->GetTimeSeconds();
-	if (Now - LastFireTime < FireInterval) { return; }
+	if (Now - LastFireTime < FireInterval / FireRateMult) { return; }
 	LastFireTime = Now;
 
 	--AmmoInMagazine;
@@ -270,10 +376,15 @@ void APlayerCharacter::Fire()
 	{
 		PlayAnimMontage(FireMontage);
 	}
-	if (WeaponFireAnim)
+	if (FireSound)
 	{
-		WeaponMesh->PlayAnimation(WeaponFireAnim, false);
+		UGameplayStatics::PlaySound2D(this, FireSound);
 	}
+	// Bolt animation on every shot disabled for Lab 6 (the bolt moves only when reloading); uncomment to bring it back
+	// if (WeaponFireAnim)
+	// {
+	// 	WeaponMesh->PlayAnimation(WeaponFireAnim, false);
+	// }
 
 	// The point under the crosshair: trace from the camera through the centre of the screen
 	FVector ViewLocation;
@@ -291,6 +402,15 @@ void APlayerCharacter::Fire()
 		? WeaponMesh->GetSocketLocation(MuzzleSocketName)
 		: ViewLocation + ViewRotation.Vector() * 50.f;
 
+	// Muzzle flash: sparks along the shot and a short flash of light
+	if (MuzzleFlashFX)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, MuzzleFlashFX, MuzzleLocation, (TargetPoint - MuzzleLocation).Rotation());
+	}
+	MuzzleLight->SetVisibility(true);
+	GetWorldTimerManager().SetTimer(MuzzleLightTimer,
+		FTimerDelegate::CreateWeakLambda(this, [this]() { MuzzleLight->SetVisibility(false); }), MuzzleLightTime, false);
+
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.Owner = this;
 	SpawnParams.Instigator = this;
@@ -299,8 +419,13 @@ void APlayerCharacter::Fire()
 	if (AMuseumProjectile* Projectile = World->SpawnActor<AMuseumProjectile>(
 		ProjectileClass, MuzzleLocation, (TargetPoint - MuzzleLocation).Rotation(), SpawnParams))
 	{
+		Projectile->SetDamageScale(DamageMultiplier);
 		Projectile->Launch(TargetPoint);
 	}
+
+	// Recoil: the muzzle climbs a little and the view kicks; aiming steadies it
+	RecoilVelocity += bIsAiming ? 12.f : 24.f;
+	ShotFovKick += 1.4f;
 
 	// Guards notice a shot aimed at them and may try to dodge it
 	for (TActorIterator<AGuardNPC> It(World); It; ++It)
@@ -333,7 +458,7 @@ void APlayerCharacter::Reload()
 	OnReloadStateChanged(true);
 
 	UAnimInstance* Anim = GetMesh()->GetAnimInstance();
-	if (!ReloadMontage || !Anim || Anim->Montage_Play(ReloadMontage) <= 0.f)
+	if (!ReloadMontage || !Anim || Anim->Montage_Play(ReloadMontage, EffectiveReloadRate()) <= 0.f)
 	{
 		// No montage to play: fill the magazine at once
 		LoadRounds(MagazineSize);
@@ -343,22 +468,125 @@ void APlayerCharacter::Reload()
 	FOnMontageBlendingOutStarted BlendingOut = FOnMontageBlendingOutStarted::CreateUObject(this, &APlayerCharacter::OnReloadMontageBlendingOut);
 	Anim->Montage_SetBlendingOutDelegate(BlendingOut, ReloadMontage);
 
-	// The shadow body plays the same montage, the pistol its own reload animation
+	// The shadow body plays the same montage; the pistol pulls its bolt back and keeps it open for the clip
 	if (UAnimInstance* BodyAnim = BodyMesh->GetAnimInstance())
 	{
-		BodyAnim->Montage_Play(ReloadMontage);
+		BodyAnim->Montage_Play(ReloadMontage, EffectiveReloadRate());
 	}
-	if (WeaponReloadAnim)
+	if (WeaponUnlockAnim)
 	{
-		WeaponMesh->PlayAnimation(WeaponReloadAnim, false);
+		WeaponMesh->PlayAnimation(WeaponUnlockAnim, false);
+		WeaponMesh->SetPosition(BoltOpenStartTime, false);
+		WeaponMesh->SetPlayRate(EffectiveReloadRate());
+		bBoltOpen = true;
+		if (BoltBackSound)
+		{
+			UGameplayStatics::PlaySound2D(this, BoltBackSound);
+		}
 	}
+
+	bFreshClipTaken = false;
+}
+
+void APlayerCharacter::UpdateReloadClip(float DeltaTime)
+{
+	// Mauser C96: the left hand pulls the empty clip out of the guide, swaps it for a full one in the pocket and sets that
+	// into the guide on top of the open action (ReloadStart); the thumb pushes the rounds down into the magazine (ReloadLoop,
+	// the hand follows the top round); the hand lets go and the bolt closes (ReloadEnd), the empty clip stays in the guide.
+	const UPlayerAnimInstance* Anim = Cast<UPlayerAnimInstance>(GetMesh()->GetAnimInstance());
+	const bool bActive = bIsReloading && Anim && ReloadMontage && Anim->Montage_IsPlaying(ReloadMontage);
+	const FName Section = bActive ? Anim->Montage_GetCurrentSection(ReloadMontage) : NAME_None;
+	const float Alpha = Anim ? Anim->GetLeftHandIKAlpha() : 0.f;
+	// The clip is seated in the guide: the montage moves on from ReloadStart to the loop
+	if (ClipInSound && PrevReloadSection == TEXT("ReloadStart") && Section == TEXT("ReloadLoop"))
+	{
+		UGameplayStatics::PlaySound2D(this, ClipInSound);
+	}
+	PrevReloadSection = Section;
+	// Out of sight in the pocket the empty clip becomes a full one (10 rounds, fewer when the reserve is low)
+	if (bActive && !bFreshClipTaken && Section == TEXT("ReloadStart") && Anim->Montage_GetPosition(ReloadMontage) >= ClipTakeTime)
+	{
+		bFreshClipTaken = true;
+		if (ClipOutSound)
+		{
+			UGameplayStatics::PlaySound2D(this, ClipOutSound);
+		}
+		RoundsInClip = FMath::Min(ClipCapacity, ReserveAmmo);
+		RoundsPushed = 0;
+		ClipStackShift = 0.f;
+		DrawnStackShift = -1.f;
+	}
+
+	// The bolt goes back as in a shot and is held there while loading
+	if (bBoltOpen && WeaponMesh->IsPlaying() && WeaponMesh->GetPosition() >= BoltCloseTime)
+	{
+		WeaponMesh->Stop();
+	}
+	// The hand has let go (or the reload stopped): the bolt goes forward and chambers a round
+	if (bBoltOpen && (!bActive || (Section == TEXT("ReloadEnd") && Alpha <= 0.f)) && WeaponReloadAnim)
+	{
+		bBoltOpen = false;
+		if (BoltForwardSound && !bIsDead)
+		{
+			UGameplayStatics::PlaySound2D(this, BoltForwardSound);
+		}
+		WeaponMesh->PlayAnimation(WeaponReloadAnim, false);
+		WeaponMesh->SetPosition(BoltCloseTime, false);
+		WeaponMesh->SetPlayRate(EffectiveReloadRate());
+	}
+
+	// The clip lives inside the pistol between reloads: it rises out of the guide at the start and is pushed back in at the end
+	const float SinkDepth = ClipHeight * ClipScale + 0.5f;
+	const float Time = bActive ? Anim->Montage_GetPosition(ReloadMontage) : 0.f;
+	ClipSink = !bActive ? SinkDepth
+		: Section == TEXT("ReloadStart") ? SinkDepth * (1.f - FMath::SmoothStep(ClipRiseTime.X, ClipRiseTime.Y, Time))
+		: Section == TEXT("ReloadEnd") ? SinkDepth * FMath::SmoothStep(ClipSinkTime.X, ClipSinkTime.Y, Time)
+		: 0.f;
+	ClipMesh->SetVisibility(ClipSink < SinkDepth, true);
+
+	// Pushed rounds slide down out of the clip; the ones fully inside the magazine are not drawn (rebuilt only while they move)
+	ClipStackShift = FMath::FInterpConstantTo(ClipStackShift, RoundsPushed * ClipRoundPitch, DeltaTime * EffectiveReloadRate(), RoundSlideSpeed);
+	ClipStackDrop = ((ClipCapacity - RoundsInClip) * ClipRoundPitch + ClipStackShift) * ClipScale;
+	if (ClipStackShift != DrawnStackShift)
+	{
+		DrawnStackShift = ClipStackShift;
+		ClipRounds->ClearInstances();
+		for (int32 i = 0; i < RoundsInClip; ++i)
+		{
+			const float Z = ClipFirstRoundZ + i * ClipRoundPitch - ClipStackShift;
+			if (Z > -ClipRoundRadius)
+			{
+				ClipRounds->AddInstance(FTransform(FVector(0.f, 0.f, Z)));
+			}
+		}
+	}
+
+	// Attached, not placed by hand, so the clip moves in the same frame as the hand or the pistol: in the clip guide while the
+	// hand is fully there (the hand reaches that pose exactly, so the switch does not show), otherwise held by the left hand
+	const bool bInGuide = !Anim || Anim->IsClipInGuide();
+	USceneComponent* Parent = bInGuide ? WeaponMesh.Get() : GetMesh();
+	const FName Socket = bInGuide ? ClipGuideSocketName : FName(TEXT("hand_l"));
+	if (ClipMesh->GetAttachParent() != Parent || ClipMesh->GetAttachSocketName() != Socket)
+	{
+		ClipMesh->AttachToComponent(Parent, FAttachmentTransformRules::SnapToTargetNotIncludingScale, Socket);
+	}
+	FTransform Clip = bInGuide ? FTransform(FVector(0.f, 0.f, -ClipSink)) : Anim->GetClipInHand(ClipStackDrop);
+	Clip.SetScale3D(FVector(ClipScale));
+	ClipMesh->SetRelativeTransform(Clip);
 }
 
 void APlayerCharacter::OnReloadNotify(FName NotifyName, const FBranchingPointNotifyPayload& BranchingPointPayload)
 {
 	if (!bIsReloading || bIsDead || NotifyName != TEXT("RoundsInserted")) { return; }
 
+	if (ClipPushSounds.Num() > 0)
+	{
+		UGameplayStatics::PlaySound2D(this, ClipPushSounds[FMath::RandHelper(ClipPushSounds.Num())]);
+	}
+
+	const int32 AmmoBefore = AmmoInMagazine;
 	LoadRounds(RoundsPerCycle);
+	RoundsPushed += AmmoInMagazine - AmmoBefore;
 
 	// Magazine full or nothing left: leave the loop, the next section raises the pistol
 	if (AmmoInMagazine >= MagazineSize || ReserveAmmo <= 0)
@@ -400,13 +628,23 @@ void APlayerCharacter::FinishReload()
 float APlayerCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
 	AController* EventInstigator, AActor* DamageCauser)
 {
-	if (bIsDead) { return 0.f; }
+	if (bIsDead || bGodMode) { return 0.f; }
 
 	const float Applied = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
 	if (Applied <= 0.f) { return 0.f; }
 
 	Health = FMath::Clamp(Health - Applied, 0.f, MaxHealth);
 	OnHealthChanged(Health, MaxHealth);
+
+	if (UMuseumDirector* Director = UMuseumDirector::Get(this))
+	{
+		Director->NotifyPlayerHurt(Applied);
+	}
+	if (DamageCauser)
+	{
+		DamageIndicators.Add({ DamageCauser->GetActorLocation(), 0.f });
+		if (DamageIndicators.Num() > 6) { DamageIndicators.RemoveAt(0); }
+	}
 
 	// The hit must be obvious: red flash on the screen and a camera shake
 	if (HUDWidget)
@@ -415,7 +653,8 @@ float APlayerCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Damag
 	}
 	if (APlayerController* PC = Cast<APlayerController>(Controller))
 	{
-		if (HitCameraShake)
+		const UMuseumUserSettings* Settings = UMuseumUserSettings::Get();
+		if (HitCameraShake && (!Settings || Settings->bCameraShake))
 		{
 			PC->ClientStartCameraShake(HitCameraShake);
 		}
@@ -441,7 +680,15 @@ void APlayerCharacter::Die()
 	GetCharacterMovement()->StopMovementImmediately();
 	GetCharacterMovement()->DisableMovement();
 
-	GetWorldTimerManager().SetTimer(RestartTimer, this, &APlayerCharacter::RestartLevel, RestartDelay, false);
+	// The game director shows the game over screen; without it the level simply restarts
+	if (UMuseumDirector* Director = UMuseumDirector::Get(this))
+	{
+		Director->NotifyPlayerDied();
+	}
+	else
+	{
+		GetWorldTimerManager().SetTimer(RestartTimer, this, &APlayerCharacter::RestartLevel, RestartDelay, false);
+	}
 }
 
 void APlayerCharacter::RestartLevel()
@@ -598,6 +845,159 @@ void APlayerCharacter::UpdateInteractionHint()
 			HUDWidget->SetInteractionHint(Hint);
 		}
 	}
+}
+
+void APlayerCharacter::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+
+	// A hard landing dips the camera
+	LandDip = FMath::Clamp(-LastFallSpeed / 900.f, 0.f, 1.f) * 7.f;
+}
+
+void APlayerCharacter::UpdateCameraFeel(float DeltaTime)
+{
+	const UMuseumUserSettings* Settings = UMuseumUserSettings::Get();
+	const bool bBob = !Settings || Settings->bHeadBob;
+
+	// Head bob: a figure-eight that follows the steps, only on the ground
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const float Speed = GetVelocity().Size2D();
+	const float MoveAlpha = (!bIsDead && Movement->IsMovingOnGround()) ? FMath::Clamp(Speed / JogSpeed, 0.f, 1.f) : 0.f;
+	BobAlpha = FMath::FInterpTo(BobAlpha, MoveAlpha, DeltaTime, 8.f);
+	BobPhase += DeltaTime * ((bWantsToWalk || bIsAiming) ? 7.5f : 10.f) * MoveAlpha;
+	const float BobScale = bBob ? (bIsAiming ? 0.35f : 1.f) : 0.f;
+	const float BobZ = FMath::Sin(BobPhase * 2.f) * 1.5f * BobAlpha * BobScale;
+	const float BobY = FMath::Sin(BobPhase) * 1.1f * BobAlpha * BobScale;
+
+	if (Movement->IsFalling()) { LastFallSpeed = GetVelocity().Z; }
+	LandDip = FMath::FInterpTo(LandDip, 0.f, DeltaTime, 7.f);
+
+	// Death: the camera drops to the floor and tilts
+	DeathAlpha = FMath::FInterpTo(DeathAlpha, bIsDead ? 1.f : 0.f, DeltaTime, 2.5f);
+	FirstPersonCamera->SetRelativeLocation(CameraBaseLocation + FVector(0.f, BobY, BobZ - LandDip - DeathAlpha * 52.f));
+
+	// Recoil pushes the view up, then it settles back
+	if (Controller && (FMath::Abs(RecoilVelocity) > 0.01f || RecoilOffset > 0.01f))
+	{
+		const float Kick = RecoilVelocity * DeltaTime;
+		RecoilVelocity = FMath::FInterpTo(RecoilVelocity, 0.f, DeltaTime, 16.f);
+		const float Recover = RecoilOffset * FMath::Min(1.f, 6.f * DeltaTime);
+		RecoilOffset = FMath::Max(RecoilOffset + Kick - Recover, 0.f);
+
+		FRotator Rotation = Controller->GetControlRotation();
+		Rotation.Pitch = FMath::Clamp(FRotator::NormalizeAxis(Rotation.Pitch) + Kick - Recover, -80.f, 80.f);
+		Controller->SetControlRotation(Rotation);
+	}
+	ShotFovKick = FMath::FInterpTo(ShotFovKick, 0.f, DeltaTime, 10.f);
+
+	// A little lean into the strafe, and the fall on death
+	if (Controller)
+	{
+		const float Lean = bBob && !bIsDead ? FVector::DotProduct(GetVelocity(), GetActorRightVector()) / JogSpeed * 1.2f : 0.f;
+		StrafeRoll = FMath::FInterpTo(StrafeRoll, Lean + DeathAlpha * 28.f, DeltaTime, 6.f);
+		FRotator Rotation = Controller->GetControlRotation();
+		Rotation.Roll = StrafeRoll;
+		Controller->SetControlRotation(Rotation);
+	}
+
+	// Hit marker, damage numbers and direction arcs age here
+	HitMarkerAge += DeltaTime;
+	for (FDamageNumber& Number : DamageNumbers) { Number.Age += DeltaTime; }
+	DamageNumbers.RemoveAll([](const FDamageNumber& Number) { return Number.Age > 0.9f; });
+	for (FDamageIndicator& Indicator : DamageIndicators) { Indicator.Age += DeltaTime; }
+	DamageIndicators.RemoveAll([](const FDamageIndicator& Indicator) { return Indicator.Age > 1.2f; });
+}
+
+void APlayerCharacter::RegisterHit(const FVector& Where, float Damage, bool bHeadshot, bool bKilled)
+{
+	HitMarkerAge = 0.f;
+	bHitMarkerHeadshot = bHeadshot;
+	bHitMarkerKill = bKilled;
+
+	const UMuseumUserSettings* Settings = UMuseumUserSettings::Get();
+	if (!Settings || Settings->bDamageNumbers)
+	{
+		DamageNumbers.Add({ Where, Damage, 0.f, bHeadshot, bKilled });
+		if (DamageNumbers.Num() > 14) { DamageNumbers.RemoveAt(0); }
+	}
+	if (UMuseumDirector* Director = UMuseumDirector::Get(this))
+	{
+		Director->PlayHitFeedback(bHeadshot, bKilled);
+	}
+}
+
+void APlayerCharacter::ApplyPerk(EMuseumPerk Perk)
+{
+	switch (Perk)
+	{
+	case EMuseumPerk::Damage: DamageMultiplier *= 1.2f; break;
+	case EMuseumPerk::FireRate: FireRateMult *= 1.15f; break;
+	case EMuseumPerk::Reload: ReloadRateMult *= 1.25f; break;
+	case EMuseumPerk::Ammo:
+		MaxReserveAmmo += 30;
+		AddAmmo(30);
+		break;
+	case EMuseumPerk::Health:
+		MaxHealth += 25.f;
+		Health = FMath::Min(Health + 40.f, MaxHealth);
+		OnHealthChanged(Health, MaxHealth);
+		break;
+	case EMuseumPerk::Speed:
+		MoveSpeedMult *= 1.08f;
+		UpdateMovementSpeed();
+		break;
+	default:
+		break;
+	}
+}
+
+void APlayerCharacter::ToggleFlashlight()
+{
+	if (Flashlight && !bIsDead)
+	{
+		Flashlight->SetVisibility(!Flashlight->IsVisible());
+	}
+}
+
+void APlayerCharacter::SetHUDVisible(bool bVisible)
+{
+	if (HUDWidget)
+	{
+		HUDWidget->SetVisibility(bVisible ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
+}
+
+void APlayerCharacter::ResetForRun()
+{
+	ReleaseObject(false);
+	GetWorldTimerManager().ClearTimer(RestartTimer);
+
+	DamageMultiplier = FireRateMult = ReloadRateMult = MoveSpeedMult = 1.f;
+	if (BaseMaxHealth > 0.f) { MaxHealth = BaseMaxHealth; }
+	if (BaseMaxReserveAmmo > 0) { MaxReserveAmmo = BaseMaxReserveAmmo; }
+
+	// Alive again: input, movement, animations
+	bIsDead = false;
+	bIsReloading = false;
+	bBoltOpen = false;
+	if (UAnimInstance* Anim = GetMesh()->GetAnimInstance()) { Anim->Montage_Stop(0.f); }
+	if (UAnimInstance* BodyAnim = BodyMesh->GetAnimInstance()) { BodyAnim->Montage_Stop(0.f); }
+	if (APlayerController* PC = Cast<APlayerController>(Controller)) { EnableInput(PC); }
+	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	DeathAlpha = 0.f;
+	RecoilVelocity = RecoilOffset = ShotFovKick = 0.f;
+	HitMarkerAge = 100.f;
+	DamageNumbers.Reset();
+	DamageIndicators.Reset();
+
+	Health = MaxHealth;
+	AmmoInMagazine = MagazineSize;
+	ReserveAmmo = StartReserveAmmo;
+	UpdateMovementSpeed();
+	OnHealthChanged(Health, MaxHealth);
+	OnAmmoChanged(AmmoInMagazine, MagazineSize, ReserveAmmo);
+	OnReloadStateChanged(false);
 }
 
 void APlayerCharacter::OnHealthChanged_Implementation(float NewHealth, float InMaxHealth)

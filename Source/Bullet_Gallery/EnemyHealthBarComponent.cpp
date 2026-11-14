@@ -13,7 +13,9 @@ UEnemyHealthBarComponent::UEnemyHealthBarComponent()
 	SetWidgetSpace(EWidgetSpace::World);
 	SetDrawSize(FVector2D(220.f, 34.f));
 	SetPivot(FVector2D(0.5f, 0.5f));
-	SetRelativeScale3D(FVector(0.5f));
+	SetRelativeScale3D(FVector(0.36f));
+	// Dimmed: the bar is unlit and glows with the bloom otherwise
+	SetTintColorAndOpacity(FLinearColor(0.62f, 0.62f, 0.62f, 1.f));
 	SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	CastShadow = false;
 
@@ -34,6 +36,13 @@ void UEnemyHealthBarComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	FaceCamera();
+}
+
+void UEnemyHealthBarComponent::SetMaxHealth(float NewMax)
+{
+	MaxHealth = FMath::Max(NewMax, 1.f);
+	Health = MaxHealth;
+	UpdateHealthValue();
 }
 
 bool UEnemyHealthBarComponent::ApplyDamage(float Amount)

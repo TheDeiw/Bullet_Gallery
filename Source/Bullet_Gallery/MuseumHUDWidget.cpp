@@ -27,7 +27,7 @@ UTextBlock* UMuseumHUDWidget::MakeText(FName Name, const FText& Text, int32 Font
 {
 	UTextBlock* TextBlock = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Name);
 	TextBlock->SetText(Text);
-	TextBlock->SetFont(FCoreStyle::GetDefaultFontStyle("Regular", FontSize));
+	TextBlock->SetFont(FCoreStyle::GetDefaultFontStyle("Bold", FontSize));
 	TextBlock->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	// A dark shadow keeps the text readable in front of bright walls
 	TextBlock->SetShadowOffset(FVector2D(1.f, 1.f));
@@ -66,18 +66,19 @@ void UMuseumHUDWidget::BuildDefaultLayout()
 	Rows->SetVisibility(ESlateVisibility::HitTestInvisible);
 	if (UCanvasPanelSlot* RowsSlot = Root->AddChildToCanvas(Rows))
 	{
-		RowsSlot->SetAnchors(FAnchors(0.f, 0.f));
-		RowsSlot->SetAlignment(FVector2D(0.f, 0.f));
-		RowsSlot->SetPosition(FVector2D(24.f, 20.f));
+		// Bottom-left corner: the top of the screen belongs to the wave counter and the score
+		RowsSlot->SetAnchors(FAnchors(0.f, 1.f));
+		RowsSlot->SetAlignment(FVector2D(0.f, 1.f));
+		RowsSlot->SetPosition(FVector2D(40.f, -34.f));
 		RowsSlot->SetAutoSize(true);
 	}
 
 	// Health: the title and a flat red line
-	Rows->AddChildToVerticalBox(MakeText(TEXT("HealthLabel"), HealthLabel, 16));
+	Rows->AddChildToVerticalBox(MakeText(TEXT("HealthLabel"), HealthLabel, 14));
 
 	USizeBox* HealthBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("HealthBarSize"));
-	HealthBox->SetWidthOverride(HealthBarSize.X);
-	HealthBox->SetHeightOverride(HealthBarSize.Y);
+	HealthBox->SetWidthOverride(FMath::Max(HealthBarSize.X, 300.f));
+	HealthBox->SetHeightOverride(FMath::Max(HealthBarSize.Y, 14.f));
 
 	HealthProgressBar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), TEXT("HealthProgressBar"));
 	FProgressBarStyle HealthStyle;
@@ -90,16 +91,17 @@ void UMuseumHUDWidget::BuildDefaultLayout()
 	HealthBox->SetContent(HealthProgressBar);
 	if (UVerticalBoxSlot* BarSlot = Rows->AddChildToVerticalBox(HealthBox))
 	{
-		BarSlot->SetPadding(FMargin(0.f, 3.f, 0.f, 16.f));
+		BarSlot->SetPadding(FMargin(0.f, 4.f, 0.f, 18.f));
 	}
 
 	// Bullets: the title and "in magazine / in reserve"
-	Rows->AddChildToVerticalBox(MakeText(TEXT("AmmoLabel"), AmmoLabel, 16));
-	AmmoText = MakeText(TEXT("AmmoText"), FText::GetEmpty(), 16);
+	Rows->AddChildToVerticalBox(MakeText(TEXT("AmmoLabel"), AmmoLabel, 14));
+	AmmoText = MakeText(TEXT("AmmoText"), FText::GetEmpty(), 34);
 	Rows->AddChildToVerticalBox(AmmoText);
 
 	// Shown only while the pistol is being reloaded
-	ReloadText = MakeText(TEXT("ReloadText"), ReloadLabel, 16);
+	ReloadText = MakeText(TEXT("ReloadText"), ReloadLabel, 18);
+	ReloadText->SetColorAndOpacity(FSlateColor(FLinearColor(0.96f, 0.85f, 0.54f)));
 	ReloadText->SetVisibility(ESlateVisibility::Collapsed);
 	Rows->AddChildToVerticalBox(ReloadText);
 

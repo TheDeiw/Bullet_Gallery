@@ -8,6 +8,7 @@
 #include "GenericTeamAgentInterface.h"
 #include "InputActionValue.h"
 #include "MuseumTeams.h"
+#include "MuseumTypes.h"
 #include "PlayerCharacter.generated.h"
 
 class UCameraComponent;
@@ -20,6 +21,12 @@ class UCameraShakeBase;
 class AMuseumProjectile;
 class UMuseumHUDWidget;
 class UPhysicsHandleComponent;
+class UStaticMeshComponent;
+class UInstancedStaticMeshComponent;
+class UPointLightComponent;
+class USpotLightComponent;
+class UNiagaraSystem;
+class USoundBase;
 
 UCLASS()
 class BULLET_GALLERY_API APlayerCharacter : public ACharacter, public IGenericTeamAgentInterface
@@ -32,6 +39,50 @@ public:
 
 	/** The player belongs to PlayersTeam, so the guards' perception treats them as an enemy */
 	virtual FGenericTeamId GetGenericTeamId() const override;
+
+	/** A floating damage number over an enemy that was hit (drawn by the HUD) */
+	struct FDamageNumber
+	{
+		FVector Location;
+		float Amount;
+		float Age;
+		bool bHeadshot;
+		bool bKill;
+	};
+
+	/** Where the last hits on the player came from (drawn by the HUD as red arcs) */
+	struct FDamageIndicator
+	{
+		FVector Source;
+		float Age;
+	};
+
+	/** Flashlight on the camera (key F): the museum is dark at night */
+	UFUNCTION(BlueprintCallable, Category = "Flashlight")
+	void ToggleFlashlight();
+
+	/** Shows or hides the health / ammo HUD (hidden in the main menu and on the end screens) */
+	void SetHUDVisible(bool bVisible);
+
+	/** Starts a new run: alive, full health and ammo, no perks */
+	void ResetForRun();
+
+	/** One level of a perk chosen between the waves */
+	void ApplyPerk(EMuseumPerk Perk);
+
+	void SetGodMode(bool bOn) { bGodMode = bOn; }
+
+	/** An enemy was hit by this player's bullet: hit marker, damage number, sound */
+	void RegisterHit(const FVector& Where, float Damage, bool bHeadshot, bool bKilled);
+
+	const TArray<FDamageNumber>& GetDamageNumbers() const { return DamageNumbers; }
+	const TArray<FDamageIndicator>& GetDamageIndicators() const { return DamageIndicators; }
+	float GetHitMarkerAge() const { return HitMarkerAge; }
+	bool IsHitMarkerHeadshot() const { return bHitMarkerHeadshot; }
+	bool IsHitMarkerKill() const { return bHitMarkerKill; }
+	float GetMaxHealth() const { return MaxHealth; }
+	int32 GetReserveAmmo() const { return ReserveAmmo; }
+	int32 GetAmmoInMagazine() const { return AmmoInMagazine; }
 
 	/** Called by a blind zone when the player walks in (true) or out (false) */
 	void SetInHidingZone(bool bInside);
@@ -46,6 +97,7 @@ protected:
 	virtual void Tick(float DeltaTime) override;
 	virtual void NotifyControllerChanged() override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+	virtual void Landed(const FHitResult& Hit) override;
 
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
@@ -63,11 +115,47 @@ protected:
 	/** The reload montage started to blend out (finished or interrupted): firing is allowed again */
 	void OnReloadMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
 	void FinishReload();
+	/** Moves the stripper clip from the left hand into the clip guide and slides the pushed rounds into the magazine */
+	void UpdateReloadClip(float DeltaTime);
 	void Die();
 	void RestartLevel();
 
 	/** Picks jog or walk speed depending on the walk key and aiming */
 	void UpdateMovementSpeed();
+
+	/** Head bob, landing dip, recoil, death camera, hit marker timers (every frame) */
+	void UpdateCameraFeel(float DeltaTime);
+
+	/** Reload speed with the perks */
+	float EffectiveReloadRate() const { return ReloadPlayRate * ReloadRateMult; }
+
+	// ---------- Perks (reset by ResetForRun) ----------
+	float DamageMultiplier = 1.f;
+	float FireRateMult = 1.f;
+	float ReloadRateMult = 1.f;
+	float MoveSpeedMult = 1.f;
+	float BaseMaxHealth = 0.f;
+	int32 BaseMaxReserveAmmo = 0;
+	bool bGodMode = false;
+
+	// ---------- Camera feel ----------
+	FVector CameraBaseLocation = FVector(15.f, 0.f, 70.f);
+	float BobPhase = 0.f;
+	float BobAlpha = 0.f;
+	float LandDip = 0.f;
+	float LastFallSpeed = 0.f;
+	float RecoilVelocity = 0.f;
+	float RecoilOffset = 0.f;
+	float ShotFovKick = 0.f;
+	float DeathAlpha = 0.f;
+	float StrafeRoll = 0.f;
+
+	// ---------- Hit feedback ----------
+	float HitMarkerAge = 100.f;
+	bool bHitMarkerHeadshot = false;
+	bool bHitMarkerKill = false;
+	TArray<FDamageNumber> DamageNumbers;
+	TArray<FDamageIndicator> DamageIndicators;
 
 	/** Creates the HUD widget and adds it to the viewport (once a player controller owns the character) */
 	void CreateHUDWidget();
@@ -99,6 +187,21 @@ protected:
 	int32 AmmoInMagazine = 0;
 	int32 ReserveAmmo = 0;
 	FTimerHandle RestartTimer;
+	FTimerHandle MuzzleLightTimer;
+
+	/** Reload state of the stripper clip: rounds it had at the start, rounds pushed into the magazine so far */
+	int32 RoundsInClip = 0;
+	int32 RoundsPushed = 0;
+	/** How far the stack of rounds has slid down, and how far its top is below the top of a full clip, cm */
+	float ClipStackShift = 0.f;
+	float ClipStackDrop = 0.f;
+	/** How deep the clip is pushed into the pistol (below the clip guide), cm; fully in = hidden */
+	float ClipSink = 0.f;
+	/** Stack shift the round instances were last built for (they are rebuilt only when it changes) */
+	float DrawnStackShift = -1.f;
+	bool bBoltOpen = false;
+	/** The empty clip has been swapped for a full one in the pocket during this reload */
+	bool bFreshClipTaken = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMuseumHUDWidget> HUDWidget;
@@ -166,6 +269,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
 
+	/** Spot light on the camera; follows the view */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Flashlight")
+	TObjectPtr<USpotLightComponent> Flashlight;
+
 	/** Weapon model (Mauser C96) attached to the hand socket */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
 	TObjectPtr<USkeletalMeshComponent> WeaponMesh;
@@ -216,13 +323,119 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 1))
 	int32 RoundsPerCycle = 5;
 
-	/** Animation of the pistol itself during the reload */
+	/** Animation of the pistol at the start of the reload: played from BoltOpenStartTime, the bolt goes back and is held at BoltCloseTime */
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
-	TObjectPtr<UAnimSequenceBase> WeaponReloadAnim;   // A_Reload
+	TObjectPtr<UAnimSequenceBase> WeaponUnlockAnim;   // A_Fire (the bolt part of a shot)
+
+	/** Animation of the pistol at the end of the reload: played from BoltCloseTime, the bolt goes forward */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TObjectPtr<UAnimSequenceBase> WeaponReloadAnim;   // A_Fire
+
+	/** Time in WeaponUnlockAnim where the bolt starts to move back, seconds */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 0))
+	float BoltOpenStartTime = 0.4f;
+
+	/** Time where the bolt is fully back (held there while loading) and starts to close, seconds */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 0))
+	float BoltCloseTime = 0.5f;
+
+	/** Stripper clip (SM_StripperClip): in the left hand, then in the clip guide while the rounds are pushed in */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<UStaticMeshComponent> ClipMesh;
+
+	/** Rounds in the clip (instances of SM_ClipRound); they slide down into the magazine as the thumb pushes them */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<UInstancedStaticMeshComponent> ClipRounds;
+
+	/** How far the top round is below the top of a full clip, cm (the left hand follows it) */
+	float GetClipStackDrop() const { return ClipStackDrop + ClipSink; }
+
+	/** Speed of the reload animation, 1 = normal */
+	UPROPERTY(EditAnywhere, Category = "Weapon", meta = (ClampMin = 0.05))
+	float ReloadPlayRate = 0.7f;
+
+	/** Debug: empties the magazine and starts a reload, so the reload can be checked in PIE without the keyboard */
+	UPROPERTY(EditAnywhere, Category = "Weapon|Debug")
+	bool bDebugReload = false;
+
+	/** Debug: fires one shot (muzzle flash check in PIE without the mouse) */
+	UPROPERTY(EditAnywhere, Category = "Weapon|Debug")
+	bool bDebugFire = false;
+
+	/** Socket on the weapon mesh at the top of the action (the clip guide) */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	FName ClipGuideSocketName = TEXT("ClipGuide");
+
+	/** Montage time when the left hand has taken the clip from the belt, seconds */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon", meta = (ClampMin = 0))
+	float ClipTakeTime = 0.48f;
+
+	/** Sparks at the muzzle on every shot (NS_MuzzleFlash), spawned along the shot direction */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
+	TObjectPtr<UNiagaraSystem> MuzzleFlashFX;
+
+	/** Short flash of light at the muzzle on every shot */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<UPointLightComponent> MuzzleLight;
+
+	/** How long the muzzle light stays on, seconds */
+	UPROPERTY(EditAnywhere, Category = "Weapon", meta = (ClampMin = 0.01))
+	float MuzzleLightTime = 0.05f;
 
 	/** Animation of the pistol itself: the slide on a shot */
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon")
 	TObjectPtr<UAnimSequenceBase> WeaponFireAnim;   // A_Fire
+
+	// ---------- Sounds (all played in 2D: they come from the player's own body and weapon) ----------
+
+	/** Mauser shot */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio")
+	TObjectPtr<USoundBase> FireSound;
+
+	/** Bolt pulled back at the start of the reload */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio")
+	TObjectPtr<USoundBase> BoltBackSound;
+
+	/** The empty clip is taken out and swapped for a full one (ClipTakeTime of the reload montage) */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio")
+	TObjectPtr<USoundBase> ClipOutSound;
+
+	/** The full clip is set into the clip guide (ReloadStart -> ReloadLoop) */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio")
+	TObjectPtr<USoundBase> ClipInSound;
+
+	/** Rounds pushed from the clip into the magazine, once per "RoundsInserted" notify; a random one of these each time */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio")
+	TArray<TObjectPtr<USoundBase>> ClipPushSounds;
+
+	/** Bolt pushed forward at the end of the reload */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio")
+	TObjectPtr<USoundBase> BoltForwardSound;
+
+	/** Footsteps: a random one of these per step */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio")
+	TArray<TObjectPtr<USoundBase>> FootstepSounds;
+
+	/** Distance walked between two steps while jogging, cm */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio", meta = (ClampMin = 10))
+	float JogStepDistance = 170.f;
+
+	/** Distance walked between two steps while walking or aiming, cm */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio", meta = (ClampMin = 10))
+	float WalkStepDistance = 110.f;
+
+	/** Calm background music: looped, non-spatial, started when the player appears (the sound must have Looping on) */
+	UPROPERTY(EditDefaultsOnly, Category = "Audio")
+	TObjectPtr<USoundBase> MusicSound;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Audio", meta = (ClampMin = 0))
+	float MusicVolume = 0.4f;
+
+	/** Distance travelled since the last step, cm */
+	float StepTravelled = 0.f;
+
+	/** Reload montage section of the previous tick (to notice ReloadStart -> ReloadLoop) */
+	FName PrevReloadSection = NAME_None;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Health", meta = (ClampMin = 1))
 	float MaxHealth = 100.f;

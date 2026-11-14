@@ -12,9 +12,10 @@ class UNiagaraComponent;
 
 /**
  * Lab 6, task 4: two natural phenomena at random intervals, driven by one actor placed in the level.
- * - Rain showers: dry pause -> fade in -> shower -> fade out -> dry ... The rain (Niagara, NS_Rain) follows the
- *   player; while it rains the sun and the sky light get darker and the fog thicker; with bThunderstorm the sky
- *   flashes with lightning now and then.
+ * - Rain showers: dry pause -> fade in -> shower -> fade out -> dry ... The rain (Niagara, NS_Rain) falls over a fixed
+ *   area at the placed actor (the garden). NS_Rain has no collision, so its box must not reach over the museum roof;
+ *   from inside the rain is seen through the doors. While it rains the sun and the sky light get darker and the fog
+ *   thicker; with bThunderstorm the sky flashes with lightning now and then.
  * - Wind gusts: calm -> gust rises -> holds -> dies down -> calm ... The strength goes to MPC_Weather.WindStrength,
  *   which the park plant materials use for their World Position Offset sway.
  * All timings are editable on the placed actor (short values for screenshots, longer ones for the demo).
@@ -82,10 +83,6 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "Rain")
 	FName SpawnRateParameter = TEXT("SpawnRate");
-
-	/** The rain emitter hangs this high above the player, cm */
-	UPROPERTY(EditAnywhere, Category = "Rain")
-	float RainHeight = 1500.f;
 
 	/** Sun and sky light intensity during a full shower, as a part of the normal one */
 	UPROPERTY(EditAnywhere, Category = "Rain", meta = (ClampMin = 0, ClampMax = 1))

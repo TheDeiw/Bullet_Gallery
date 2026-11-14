@@ -6,7 +6,6 @@
 #include "Engine/DirectionalLight.h"
 #include "Engine/ExponentialHeightFog.h"
 #include "Engine/SkyLight.h"
-#include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMaterialLibrary.h"
 #include "NiagaraComponent.h"
 
@@ -19,8 +18,6 @@ AWeatherController::AWeatherController()
 	RainComponent = CreateDefaultSubobject<UNiagaraComponent>(TEXT("Rain"));
 	RainComponent->SetupAttachment(RootComponent);
 	RainComponent->SetAutoActivate(false);
-	// Moved to the player every frame in world space
-	RainComponent->SetUsingAbsoluteLocation(true);
 }
 
 void AWeatherController::BeginPlay()
@@ -152,15 +149,6 @@ void AWeatherController::ApplyWeather()
 
 	if (RainComponent->IsActive())
 	{
-		if (const APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0))
-		{
-			const FVector Above = Player->GetActorLocation() + FVector(0.f, 0.f, RainHeight);
-			RainComponent->SetWorldLocation(Above);
-
-			// NS_Rain is a lightweight emitter without collision: under a roof the drops would fall through it, so hide them indoors
-			const FCollisionQueryParams Params(SCENE_QUERY_STAT(RainRoof), false, Player);
-			RainComponent->SetVisibility(!GetWorld()->LineTraceTestByChannel(Player->GetActorLocation(), Above, ECC_Visibility, Params));
-		}
 		RainComponent->SetVariableFloat(SpawnRateParameter, RainSpawnRate * RainAmount);
 	}
 

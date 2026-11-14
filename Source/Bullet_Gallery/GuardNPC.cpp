@@ -4,6 +4,7 @@
 #include "EnemyHealthBarComponent.h"
 #include "GuardAIController.h"
 #include "GuardHealthBarWidget.h"
+#include "MuseumDirector.h"
 #include "PlayerCharacter.h"
 
 #include "Animation/AnimInstance.h"
@@ -20,6 +21,8 @@
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISense_Sight.h"
+#include "MuseumAudio.h"
+#include "Sound/SoundBase.h"
 
 namespace
 {
@@ -85,6 +88,8 @@ void AGuardNPC::BeginPlay()
 {
 	Super::BeginPlay();
 
+	if (!SoundAttenuation) { SoundAttenuation = NewNpcSoundAttenuation(this); }
+
 	// Run speed comes from the movement component, the walk is a part of it
 	RunSpeed = GetCharacterMovement()->MaxWalkSpeed;
 	WalkSpeed = RunSpeed * WalkSpeedFraction;
@@ -103,6 +108,26 @@ void AGuardNPC::PossessedBy(AController* NewController)
 UBlackboardComponent* AGuardNPC::GetBlackboard() const
 {
 	return GuardController ? GuardController->GetBlackboardComponent() : nullptr;
+}
+
+void AGuardNPC::ApplyVariant(const FEnemyVariant& InVariant)
+{
+	Variant = InVariant;
+	bHunter = InVariant.bHunter;
+	WeaponDamage *= InVariant.DamageMul;
+	GetCharacterMovement()->MaxWalkSpeed *= InVariant.SpeedMul;
+	HealthBar->SetMaxHealth(HealthBar->GetMaxHealth() * InVariant.HealthMul);
+}
+
+void AGuardNPC::AlertTo(AActor* Target)
+{
+	UBlackboardComponent* Blackboard = GetBlackboard();
+	if (!Blackboard || !Target || !GuardController) { return; }
+
+	PerceivedActor = Target;
+	TargetLostElapsed = 0.f;
+	Blackboard->SetValueAsObject(GuardController->GetDetectedEnemyKey(), Target);
+	Blackboard->SetValueAsVector(GuardController->GetLastKnownLocationKey(), Target->GetActorLocation());
 }
 
 ETeamAttitude::Type AGuardNPC::GetTeamAttitudeTowards(const AActor& Other) const
@@ -168,6 +193,13 @@ void AGuardNPC::Tick(float DeltaTime)
 	UpdateLineOfSight();
 	UpdateWeaponRaise(DeltaTime);
 
+	// Detection started: the target goes from none to set (seen, shot at or hit all set PerceivedActor), once per detection
+	if (PerceivedActor && !bWasAlerted && AlertSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, AlertSound, GetActorLocation(), 1.f, 1.f, 0.f, SoundAttenuation);
+	}
+	bWasAlerted = PerceivedActor != nullptr;
+
 	UBlackboardComponent* Blackboard = GetBlackboard();
 	if (!Blackboard) { return; }
 
@@ -176,6 +208,17 @@ void AGuardNPC::Tick(float DeltaTime)
 	{
 		LastLocationElapsed = 0.f;
 		Blackboard->SetValueAsVector(GuardController->GetLastKnownLocationKey(), PerceivedActor->GetActorLocation());
+	}
+
+	// Wave guards never forget the player: when out of sight they keep walking to where the player is
+	if (bHunter && !bHasLineOfSight && PerceivedActor)
+	{
+		TargetLostElapsed = 0.f;
+		if ((HunterRefreshElapsed += DeltaTime) >= 1.f)
+		{
+			HunterRefreshElapsed = 0.f;
+			Blackboard->SetValueAsVector(GuardController->GetLastKnownLocationKey(), PerceivedActor->GetActorLocation());
+		}
 	}
 
 	// Not seen for TargetLostTime: forget the player and go back to patrolling
@@ -267,6 +310,10 @@ bool AGuardNPC::FireAt(AActor* Target)
 	{
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, MuzzleEffect, Muzzle, Direction.Rotation());
 	}
+	if (ShotSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, ShotSound, Muzzle, 1.f, 1.f, 0.f, SoundAttenuation);
+	}
 	if (bHit && ImpactEffect)
 	{
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, ImpactEffect, Hit.ImpactPoint, Hit.ImpactNormal.Rotation());
@@ -352,6 +399,16 @@ float AGuardNPC::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
 	// The bullet flies past while the guard jumps aside
 	if (bIsDead || bIsDodging) { return 0.f; }
 
+	// A bullet in the upper part of the body is a headshot: double damage
+	FVector HitLocation = GetActorLocation();
+	bool bHeadshot = false;
+	if (DamageEvent.IsOfType(FPointDamageEvent::ClassID))
+	{
+		HitLocation = static_cast<const FPointDamageEvent&>(DamageEvent).HitInfo.ImpactPoint;
+		bHeadshot = HitLocation.Z > GetActorLocation().Z + GetCapsuleComponent()->GetScaledCapsuleHalfHeight() * 0.42f;
+		if (bHeadshot) { DamageAmount *= 2.f; }
+	}
+
 	const float Applied = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
 	if (Applied <= 0.f) { return 0.f; }
 
@@ -366,7 +423,13 @@ float AGuardNPC::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
 		Blackboard->SetValueAsVector(GuardController->GetLastKnownLocationKey(), Shooter->GetActorLocation());
 	}
 
-	if (HealthBar->ApplyDamage(Applied))
+	const bool bKilled = HealthBar->ApplyDamage(Applied);
+	bLastHitHeadshot = bHeadshot;
+	if (APlayerCharacter* ShooterPlayer = Cast<APlayerCharacter>(Shooter))
+	{
+		ShooterPlayer->RegisterHit(HitLocation, Applied, bHeadshot, bKilled);
+	}
+	if (bKilled)
 	{
 		Die();
 	}
@@ -376,6 +439,10 @@ float AGuardNPC::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
 void AGuardNPC::Die()
 {
 	bIsDead = true;
+	if (UMuseumDirector* Director = UMuseumDirector::Get(this))
+	{
+		Director->NotifyEnemyKilled(this, Variant, bLastHitHeadshot);
+	}
 	bIsDodging = false;
 	GetWorldTimerManager().ClearTimer(DodgeTimer);
 
